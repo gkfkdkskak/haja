@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>하자 점검 및 현장 관리 시스템 (전체현장 그룹별 보기 추가)</title>
+    <title>하자 점검 및 현장 관리 시스템 (모바일 패닝 완벽 픽스판)</title>
     
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
@@ -321,7 +321,6 @@
                         <button id="gf_pending" onclick="setGlobalFilter('pending')">미조치</button>
                         <button id="gf_completed" onclick="setGlobalFilter('completed')">완료</button>
                     </div>
-                    <!-- 💡 새롭게 추가된 그룹별 정렬 토글 -->
                     <label style="font-size:12px; font-weight:bold; color:#2c3e50; cursor:pointer; display:flex; align-items:center; gap:4px; padding-left:10px;">
                         <input type="checkbox" id="globalGroupByCheck" onchange="renderGlobalList()" checked>
                         📁 그룹별 묶어보기
@@ -738,32 +737,48 @@
     function selectMarker(id) { selectedMarkerId = id; renderMarkers(); renderRightPanel(); }
     function deselectMarker() { selectedMarkerId = null; renderMarkers(); renderRightPanel(); }
 
-    let draggingMarkerId = null; let draggingMarkerEl = null; let isMarkerMoved = false; let isPanning = false; let panStartX = 0; let panStartY = 0; let scrollStartX = 0; let scrollStartY = 0; let isMapSwiping = false; const wrapper = document.querySelector('.viewport-wrapper');
+    // 💡 [핵심 픽스] 도면 패닝 이중 처리 로직
+    let draggingMarkerId = null; let draggingMarkerEl = null; let isMarkerMoved = false; 
+    let isPanning = false; let panStartX = 0; let panStartY = 0; 
+    let scrollStartX1 = 0; let scrollStartY1 = 0; let scrollStartX2 = 0; let scrollStartY2 = 0; 
+    let isMapSwiping = false; 
+    const viewportInner = document.getElementById('mapViewport');
+    const viewportOuter = document.querySelector('.viewport-wrapper');
+
     zoomArea.addEventListener('pointerdown', e => { 
         if(isPinching) return; const pin = e.target.closest('.pin-container');
         if (pin) { draggingMarkerId = parseInt(pin.dataset.id); draggingMarkerEl = pin; isMarkerMoved = false; pin.style.zIndex = 30; e.stopPropagation(); } 
-        else { isPanning = true; panStartX = e.clientX || (e.touches ? e.touches[0].clientX : 0); panStartY = e.clientY || (e.touches ? e.touches[0].clientY : 0); scrollStartX = wrapper.scrollLeft; scrollStartY = wrapper.scrollTop; isMapSwiping = false; zoomArea.style.cursor = 'grabbing'; zoomArea.setPointerCapture(e.pointerId); if(e.pointerType === 'mouse') e.preventDefault(); }
-    });
-    zoomArea.addEventListener('pointermove', e => { 
-        if (draggingMarkerId && draggingMarkerEl && currentPlanId && !isPinching) {
-            isMarkerMoved = true; const rect = planImage.getBoundingClientRect(); let x = e.clientX || (e.touches ? e.touches[0].clientX : 0); let y = e.clientY || (e.touches ? e.touches[0].clientY : 0);
-            let pctX = ((x - rect.left) / rect.width) * 100; let pctY = ((y - rect.top) / rect.height) * 100; pctX = Math.max(0, Math.min(100, pctX)); pctY = Math.max(0, Math.min(100, pctY));
-            draggingMarkerEl.style.left = pctX + '%'; draggingMarkerEl.style.top = pctY + '%';
-        } else if (isPanning && !isPinching) {
-            let x = e.clientX || (e.touches ? e.touches[0].clientX : 0); let y = e.clientY || (e.touches ? e.touches[0].clientY : 0); let dx = x - panStartX; let dy = y - panStartY;
-            if (Math.abs(dx) > 5 || Math.abs(dy) > 5) isMapSwiping = true; wrapper.scrollLeft = scrollStartX - dx; wrapper.scrollTop = scrollStartY - dy;
+        else { 
+            isPanning = true; panStartX = e.clientX; panStartY = e.clientY; 
+            scrollStartX1 = viewportInner.scrollLeft; scrollStartY1 = viewportInner.scrollTop; 
+            scrollStartX2 = viewportOuter.scrollLeft; scrollStartY2 = viewportOuter.scrollTop; 
+            isMapSwiping = false; zoomArea.style.cursor = 'grabbing'; 
+            zoomArea.setPointerCapture(e.pointerId); if(e.pointerType === 'mouse') e.preventDefault(); 
         }
     });
+
+    zoomArea.addEventListener('pointermove', e => { 
+        if (draggingMarkerId && draggingMarkerEl && currentPlanId && !isPinching) {
+            isMarkerMoved = true; const rect = planImage.getBoundingClientRect(); 
+            let pctX = ((e.clientX - rect.left) / rect.width) * 100; let pctY = ((e.clientY - rect.top) / rect.height) * 100; 
+            pctX = Math.max(0, Math.min(100, pctX)); pctY = Math.max(0, Math.min(100, pctY));
+            draggingMarkerEl.style.left = pctX + '%'; draggingMarkerEl.style.top = pctY + '%';
+        } else if (isPanning && !isPinching) {
+            let dx = e.clientX - panStartX; let dy = e.clientY - panStartY;
+            if (Math.abs(dx) > 5 || Math.abs(dy) > 5) isMapSwiping = true; 
+            viewportInner.scrollLeft = scrollStartX1 - dx; viewportInner.scrollTop = scrollStartY1 - dy;
+            viewportOuter.scrollLeft = scrollStartX2 - dx; viewportOuter.scrollTop = scrollStartY2 - dy;
+        }
+    });
+
     window.addEventListener('pointerup', function(e) {
         if(isPanning) { isPanning = false; zoomArea.style.cursor = 'grab'; try { zoomArea.releasePointerCapture(e.pointerId); } catch(err){} }
         
         if (draggingMarkerId && draggingMarkerEl && currentPlanId) {
             if (isMarkerMoved) {
                 const rect = planImage.getBoundingClientRect(); 
-                let x = e.clientX || (e.changedTouches ? e.changedTouches[0].clientX : 0); 
-                let y = e.clientY || (e.changedTouches ? e.changedTouches[0].clientY : 0);
-                let pctX = Math.max(0, Math.min(100, ((x - rect.left) / rect.width) * 100)).toFixed(2); 
-                let pctY = Math.max(0, Math.min(100, ((y - rect.top) / rect.height) * 100)).toFixed(2);
+                let pctX = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100)).toFixed(2); 
+                let pctY = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100)).toFixed(2);
                 
                 if (!markersByPlan[currentPlanId]) markersByPlan[currentPlanId] = [];
                 const marker = markersByPlan[currentPlanId].find(m => m.id === draggingMarkerId); 
@@ -774,8 +789,8 @@
             
         } else if (e.target && e.target.closest && e.target.closest('#zoomArea') && currentPlanId && !isPinching && !isMapSwiping) {
             const rect = planImage.getBoundingClientRect(); 
-            let xInsideImg = (e.clientX || (e.changedTouches ? e.changedTouches[0].clientX : 0)) - rect.left; 
-            let yInsideImg = (e.clientY || (e.changedTouches ? e.changedTouches[0].clientY : 0)) - rect.top;
+            let xInsideImg = e.clientX - rect.left; 
+            let yInsideImg = e.clientY - rect.top;
             
             if (xInsideImg < 0 || yInsideImg < 0 || xInsideImg > rect.width || yInsideImg > rect.height) return;
             const clickX = ((xInsideImg / rect.width) * 100).toFixed(2); 
@@ -988,7 +1003,7 @@
     function deleteSelectedMarker() { if(confirm("삭제하시겠습니까?")) { const mId = selectedMarkerId; markersByPlan[currentPlanId] = markersByPlan[currentPlanId].filter(m => m.id !== mId); deselectMarker(); deleteMarkerFromCloud(mId); } }
 
     // ==========================================
-    // 💡 전체 현장 목록 모달 로직 (그룹별 보기 적용)
+    // 전체 현장 목록 모달 로직 (그룹별 보기 적용)
     // ==========================================
     let globalFilterStatus = 'all';
 
@@ -996,7 +1011,6 @@
         document.getElementById('globalListModal').style.display = 'flex';
         document.getElementById('globalSearchInput').value = '';
         
-        // 필터 옵션 채우기
         const tSel = document.getElementById('globalTypeSelect');
         tSel.innerHTML = `<option value="all">🏷️ 유형 전체</option>` + defectTypes.map(t => `<option value="${t}">${t}</option>`).join('');
         const uSel = document.getElementById('globalUserSelect');
@@ -1059,7 +1073,6 @@
         let html = '';
         
         if (isGrouped) {
-            // 그룹(동) -> 도면별로 데이터 분류
             const groupedData = {};
             filtered.forEach(m => {
                 if (!groupedData[m._gName]) groupedData[m._gName] = {};
@@ -1089,7 +1102,6 @@
                 }
             }
         } else {
-            // 그룹핑 해제 시 일렬로 나열 (기존 방식)
             html += `<div class="marker-list">`;
             filtered.forEach(m => {
                 const isCompleted = m.status === 'completed'; 
