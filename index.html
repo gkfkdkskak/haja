@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>하자 점검 및 현장 관리 시스템 (전체 목록 분리판)</title>
+    <title>하자 점검 및 현장 관리 시스템 (전체현장 그룹별 보기 추가)</title>
     
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
@@ -13,7 +13,6 @@
     <style>
         body { font-family: 'Malgun Gothic', sans-serif; background-color: #f0f2f5; margin: 0; padding: 0; color: #333; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
         
-        /* 로그인 스크린 & 로딩 오버레이 */
         #loginScreen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(135deg, #2c3e50, #3498db); z-index: 10000; display: flex; align-items: center; justify-content: center; }
         #loadingOverlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 10001; align-items: center; justify-content: center; flex-direction: column; color: white; }
         @keyframes spin { 100% { transform: rotate(360deg); } }
@@ -33,7 +32,6 @@
         .btn-login { width: 100%; background: #3498db; color: white; border: none; padding: 14px; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; transition: all 0.2s; margin-top: 10px; }
         .btn-login:hover { background: #2980b9; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(52, 152, 219, 0.4); }
 
-        /* 헤더 */
         .app-container { display: none; width: 100%; max-width: 1600px; margin: 0 auto; flex-direction: column; gap: 15px; padding: 15px; height: 100%; box-sizing: border-box; }
         .top-header { background: #fff; padding: 12px 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; flex-shrink: 0; }
         .top-header h1 { margin: 0; font-size: 18px; color: #2c3e50; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
@@ -45,18 +43,16 @@
         .top-actions .btn-logout { border-color: #e74c3c; color: #e74c3c !important; }
         .top-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
         .top-actions button.action-btn { padding: 8px 12px; border: none; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; color: white; display: flex; align-items: center; gap: 6px; transition: 0.2s; white-space: nowrap; }
-        .btn-global { background-color: #16a085; } /* 전체목록 전용 색상 */
+        .btn-global { background-color: #16a085; } 
         .btn-dash { background-color: #f39c12; } .btn-excel { background-color: #1d6f42; } .btn-pdf { background-color: #e74c3c; } .btn-backup { background-color: #8e44ad; }
         
         .cloud-status-badge { display: flex; align-items: center; gap: 5px; font-size: 11px; font-weight: bold; color: #27ae60; background: #d4efdf; padding: 4px 10px; border-radius: 12px; margin-right: 5px; border: 1px solid #a9dfbf; white-space: nowrap; }
         .cloud-dot { width: 6px; height: 6px; background-color: #27ae60; border-radius: 50%; display: inline-block; animation: blink 1.5s infinite ease-in-out; }
 
-        /* 메인 레이아웃 */
         .main-layout { display: flex; gap: 15px; align-items: stretch; flex-grow: 1; min-height: 0; width: 100%; box-sizing: border-box; }
         .panel { background: #fff; padding: 15px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); box-sizing: border-box; display: flex; flex-direction: column; min-height: 0; }
         .panel h3 { margin-top: 0; color: #2c3e50; font-size: 16px; border-bottom: 2px solid #ecf0f1; padding-bottom: 8px; margin-bottom: 12px; flex-shrink: 0; }
         
-        /* 좌측 패널 (그룹 관리) */
         .sidebar-left { width: 300px; flex-shrink: 0; display: flex; flex-direction: column; }
         .add-group-btn { width: 100%; background-color: #2c3e50; color: white; padding: 10px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; margin-bottom: 12px; flex-shrink: 0; }
         .sidebar-scroll-area { flex-grow: 1; overflow-y: auto; padding-right: 5px; }
@@ -79,7 +75,6 @@
         .plan-actions { display: flex; gap: 2px; flex-shrink: 0; }
         .plan-actions button { background: white; border: 1px solid #ddd; cursor: pointer; font-size: 10px; padding: 3px 5px; border-radius: 4px; color: #555; white-space: nowrap; }
 
-        /* 중앙 패널 (뷰어) */
         .main-content { flex-grow: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
         .zoom-controls { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 10px; flex-shrink: 0; }
         .zoom-btns { display: flex; align-items: center; gap: 5px; background: #f8f9fa; padding: 5px 8px; border-radius: 8px; border: 1px solid #e9ecef; flex-wrap: wrap; }
@@ -93,7 +88,6 @@
         .zoom-area:active { cursor: grabbing; }
         .zoom-area img { width: 100%; height: auto; display: block; user-select: none; -webkit-user-drag: none; pointer-events: none; }
 
-        /* 마커 핀 스타일 */
         .pin-container { position: absolute; width: 30px; height: 36px; transform: translate(-50%, -100%); cursor: grab; z-index: 10; transition: transform 0.1s; }
         .pin-container:active { cursor: grabbing; }
         .pin-container.selected { z-index: 20; transform: translate(-50%, -110%) scale(1.2); }
@@ -104,7 +98,6 @@
         .pin-label { position: absolute; top: 38px; left: 50%; transform: translateX(-50%); background: rgba(255, 255, 255, 0.95); border: 1px solid #bdc3c7; padding: 3px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; color: #333; white-space: nowrap; box-shadow: 0 2px 4px rgba(0,0,0,0.2); pointer-events: none; opacity: 0; visibility: hidden; transition: 0.2s; z-index: 30;}
         .pin-container:hover .pin-label, .pin-container.selected .pin-label { opacity: 1; visibility: visible; }
 
-        /* 우측 패널 (현재 현장만 표시되도록 수정됨) */
         .sidebar-right { width: 340px; flex-shrink: 0; display: flex; flex-direction: column; }
         #rightContent { flex-grow: 1; overflow-y: auto; padding-right: 5px; }
         .empty-state { text-align: center; color: #7f8c8d; font-size: 13px; padding: 40px 0; }
@@ -131,7 +124,6 @@
         .badge-status.completed { background: #d4efdf; color: #27ae60; }
         .badge-type { font-size: 10px; font-weight: bold; padding: 2px 4px; border-radius: 4px; background: #ecf0f1; color: #34495e; margin-right: 4px; }
 
-        /* 상세 정보 폼 */
         .back-btn { background: #f1f2f6; border: 1px solid #dfe4ea; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: bold; color: #2f3640; margin-bottom: 12px; width: 100%; text-align: left; transition: 0.2s; }
         .back-btn:hover { background: #e2e6ea; }
         .status-toggle-group { display: flex; gap: 6px; margin-bottom: 10px; }
@@ -159,7 +151,6 @@
         .photo-card .dl-photo-btn { position: absolute; bottom: 4px; right: 4px; background: rgba(52, 152, 219, 0.9); color: white; border: none; border-radius: 4px; width: 24px; height: 24px; font-size: 12px; cursor: pointer; font-weight: bold; display: flex; align-items: center; justify-content: center;}
         .btn-delete { width: 100%; background-color: #e74c3c; color: white; padding: 10px; border: none; border-radius: 6px; font-size: 13px; font-weight: bold; cursor: pointer; margin-top: 10px; }
         
-        /* 모달 공통 */
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 9999; align-items: center; justify-content: center; padding: 15px; box-sizing: border-box; }
         .modal-card { background: #fff; width: 100%; max-width: 450px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); overflow: hidden; animation: fadeIn 0.2s ease-in-out; display: flex; flex-direction: column; max-height: 90vh; }
         .modal-card-header { background: #2c3e50; color: white; padding: 12px 15px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
@@ -188,7 +179,6 @@
         .stat-val { font-size: 22px; font-weight: 900; margin-top: 5px; line-height: 1; }
         .stat-title { font-size: 12px; font-weight: bold; color: #555; white-space: nowrap; }
 
-        /* 마크업 모달 */
         #imageMarkupModal { flex-direction: column; background: rgba(0,0,0,0.9); }
         .canvas-container { position: relative; box-shadow: 0 10px 30px rgba(0,0,0,0.6); border-radius: 8px; overflow: hidden; }
         #markupCanvas { cursor: crosshair; touch-action: none; display: block; background: #000; }
@@ -253,7 +243,6 @@
                 <button class="btn-manage" onclick="openUserModal()">⚙️ 팀원</button>
                 <button class="btn-manage" onclick="openTypeModal()">🏷️ 유형</button>
             </div>
-            <!-- 💡 전체 현장 목록 모달 띄우기 버튼 추가 -->
             <button class="action-btn btn-global" onclick="openGlobalListModal()">🌍 전체 목록</button>
             <button class="action-btn btn-dash" onclick="openDashboardModal()">📊 통계</button>
             <button class="action-btn btn-excel" onclick="openExportOptionModal('excel')">📊 엑셀</button>
@@ -317,7 +306,6 @@
     </div>
 </div>
 
-<!-- 💡 전체 현장 목록 모달 신설 -->
 <div id="globalListModal" class="modal-overlay" onclick="closeGlobalListModal()">
     <div class="modal-card" style="max-width:800px; height:85vh;" onclick="event.stopPropagation()">
         <div class="modal-card-header">
@@ -327,10 +315,17 @@
         <div class="modal-card-body" style="display:flex; flex-direction:column; overflow:hidden; padding: 15px;">
             <div style="flex-shrink:0; margin-bottom:10px;">
                 <input type="text" id="globalSearchInput" placeholder="🔍 하자 내용, 도면명 등 전역 검색..." oninput="renderGlobalList()" style="width:100%; padding:10px; border:2px solid #3498db; border-radius:6px; font-size:13px; box-sizing:border-box; outline:none; font-weight:bold; margin-bottom:10px;">
-                <div class="status-filter-box">
-                    <button id="gf_all" class="active" onclick="setGlobalFilter('all')">전체</button>
-                    <button id="gf_pending" onclick="setGlobalFilter('pending')">미조치</button>
-                    <button id="gf_completed" onclick="setGlobalFilter('completed')">완료</button>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <div class="status-filter-box" style="margin-bottom:0; flex-grow:1; max-width:250px;">
+                        <button id="gf_all" class="active" onclick="setGlobalFilter('all')">전체</button>
+                        <button id="gf_pending" onclick="setGlobalFilter('pending')">미조치</button>
+                        <button id="gf_completed" onclick="setGlobalFilter('completed')">완료</button>
+                    </div>
+                    <!-- 💡 새롭게 추가된 그룹별 정렬 토글 -->
+                    <label style="font-size:12px; font-weight:bold; color:#2c3e50; cursor:pointer; display:flex; align-items:center; gap:4px; padding-left:10px;">
+                        <input type="checkbox" id="globalGroupByCheck" onchange="renderGlobalList()" checked>
+                        📁 그룹별 묶어보기
+                    </label>
                 </div>
                 <div class="combo-filter-box">
                     <select id="globalTypeSelect" onchange="renderGlobalList()"></select>
@@ -873,8 +868,8 @@
                     html += `
                         <div class="photo-card">
                             <img src="${url}" onclick="openImageMarkupModal(${marker.id}, 'before', ${pIdx})" title="마크업 그리기">
-                            <button class="del-photo-btn" onclick="removeMarkerPhoto('before', ${pIdx})" title="삭제">✕</button>
-                            <button class="dl-photo-btn" onclick="downloadMarkerPhoto(${marker.id}, 'before', ${pIdx})" title="사진 다운로드">⬇️</button>
+                            <button class="del-photo-btn" onclick="removeMarkerPhoto(event, 'before', ${pIdx})" title="삭제">✕</button>
+                            <button class="dl-photo-btn" onclick="downloadMarkerPhoto(event, ${marker.id}, 'before', ${pIdx})" title="사진 다운로드">⬇️</button>
                         </div>`; 
                 }); 
                 html += `</div>`; 
@@ -891,8 +886,8 @@
                     html += `
                         <div class="photo-card">
                             <img src="${url}" onclick="openImageMarkupModal(${marker.id}, 'after', ${pIdx})" title="마크업 그리기">
-                            <button class="del-photo-btn" onclick="removeMarkerPhoto('after', ${pIdx})" title="삭제">✕</button>
-                            <button class="dl-photo-btn" onclick="downloadMarkerPhoto(${marker.id}, 'after', ${pIdx})" title="사진 다운로드">⬇️</button>
+                            <button class="del-photo-btn" onclick="removeMarkerPhoto(event, 'after', ${pIdx})" title="삭제">✕</button>
+                            <button class="dl-photo-btn" onclick="downloadMarkerPhoto(event, ${marker.id}, 'after', ${pIdx})" title="사진 다운로드">⬇️</button>
                         </div>`; 
                 }); 
                 html += `</div>`; 
@@ -921,14 +916,13 @@
         } e.target.value = '';
     }
     
-    function downloadMarkerPhoto(markerId, type, pIdx) {
-        event.stopPropagation();
+    function downloadMarkerPhoto(event, markerId, type, pIdx) {
+        if(event) event.stopPropagation();
         const marker = markersByPlan[currentPlanId].find(m => m.id === markerId); if (!marker) return;
         const targetArray = type === 'after' ? marker.afterPhotoUrls : marker.photoUrls; const base64Url = targetArray[pIdx]; if (!base64Url) return;
         const link = document.createElement('a'); link.href = base64Url; link.download = `marker_${markerId}_${type}_${pIdx + 1}.jpg`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
     }
 
-    // 💡 [변경] 오른쪽 패널은 무조건 '현재 도면' 목록만 렌더링하도록 변경
     function renderMarkerListOnly() {
         const keyword = searchInput.value.toLowerCase().trim(); let targetMarkers = [];
         if (currentPlanId) { targetMarkers = (markersByPlan[currentPlanId] || []).map((m, i) => ({...m, _idx: i, _pId: currentPlanId})); }
@@ -940,7 +934,7 @@
         if (selectedUserFilter !== 'all') { filtered = filtered.filter(m => (m.authorName || '미상') === selectedUserFilter); }
         if (keyword) { filtered = filtered.filter(m => (m.desc && m.desc.toLowerCase().includes(keyword)) || (m.authorName && m.authorName.toLowerCase().includes(keyword)) || (m.type && m.type.toLowerCase().includes(keyword)) ); }
 
-        let html = ``; // 탭 삭제됨
+        let html = ``; 
         if (!currentPlanId) { html += `<div class="empty-state">도면을 선택해 주세요.</div>`; rightContent.innerHTML = html; return; }
 
         let typeOpts = `<option value="all" ${selectedTypeFilter==='all'?'selected':''}>🏷️ 유형 전체</option>`; defectTypes.forEach(t => { typeOpts += `<option value="${t}" ${selectedTypeFilter===t?'selected':''}>${t}</option>`; });
@@ -986,28 +980,31 @@
     function updateMarkerType(value) { const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId); if (marker) { marker.type = value; renderMarkers(); syncMarkerToCloud(marker.id, currentPlanId); } }
     function updateMarkerDesc(value) { const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId); if (marker) { marker.desc = value; syncMarkerToCloud(marker.id, currentPlanId); } }
 
-    function removeMarkerPhoto(type, photoIndex) {
-        event.stopPropagation();
+    function removeMarkerPhoto(event, type, photoIndex) {
+        if(event) event.stopPropagation();
         if(confirm("지우시겠습니까?")) { const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId); if (marker) { const targetArray = type === 'after' ? marker.afterPhotoUrls : marker.photoUrls; const origArray = type === 'after' ? marker.originalAfterPhotoUrls : marker.originalPhotoUrls; if (targetArray) targetArray.splice(photoIndex, 1); if (origArray) origArray.splice(photoIndex, 1); renderRightPanel(); syncMarkerToCloud(marker.id, currentPlanId); } }
     }
 
     function deleteSelectedMarker() { if(confirm("삭제하시겠습니까?")) { const mId = selectedMarkerId; markersByPlan[currentPlanId] = markersByPlan[currentPlanId].filter(m => m.id !== mId); deselectMarker(); deleteMarkerFromCloud(mId); } }
 
     // ==========================================
-    // 💡 전체 현장 목록 모달 로직 (신설)
+    // 💡 전체 현장 목록 모달 로직 (그룹별 보기 적용)
     // ==========================================
     let globalFilterStatus = 'all';
 
     function openGlobalListModal() {
         document.getElementById('globalListModal').style.display = 'flex';
         document.getElementById('globalSearchInput').value = '';
-        setGlobalFilter('all'); // 이것이 renderGlobalList를 호출함
         
         // 필터 옵션 채우기
         const tSel = document.getElementById('globalTypeSelect');
         tSel.innerHTML = `<option value="all">🏷️ 유형 전체</option>` + defectTypes.map(t => `<option value="${t}">${t}</option>`).join('');
         const uSel = document.getElementById('globalUserSelect');
         uSel.innerHTML = `<option value="all">👤 담당자 전체</option>` + userList.map(u => `<option value="${u}">${u}</option>`).join('');
+        
+        if(document.getElementById('globalGroupByCheck')) document.getElementById('globalGroupByCheck').checked = true;
+        
+        setGlobalFilter('all'); 
     }
 
     function closeGlobalListModal() {
@@ -1026,6 +1023,7 @@
         const keyword = document.getElementById('globalSearchInput').value.toLowerCase().trim();
         const typeFilter = document.getElementById('globalTypeSelect') ? document.getElementById('globalTypeSelect').value : 'all';
         const userFilter = document.getElementById('globalUserSelect') ? document.getElementById('globalUserSelect').value : 'all';
+        const isGrouped = document.getElementById('globalGroupByCheck') ? document.getElementById('globalGroupByCheck').checked : true;
         
         let allMarkers = [];
         groups.forEach(g => {
@@ -1058,31 +1056,66 @@
             return;
         }
 
-        let html = `<div class="marker-list">`;
-        filtered.forEach(m => {
-            const isCompleted = m.status === 'completed'; 
-            const textSnippet = m.desc ? m.desc : '<span style="color:#aaa;">내용 미입력</span>'; 
-            const pinColor = isCompleted ? '#27ae60' : getTypeColor(m.type || '미지정');
-            const locInfo = `<div style="font-size:11px; color:#3498db; margin-bottom:3px; font-weight:bold;">[${m._gName}] ${m._pName}</div>`;
-            
-            html += `
-                <div class="marker-list-item" onclick="jumpToMarkerFromGlobal('${m._pId}', ${m.id})">
-                    <div class="marker-num" style="background-color:${pinColor};">${m._idx + 1}</div>
-                    <div style="flex-grow:1; min-width:0;">
-                        ${locInfo}
-                        <div class="marker-desc"><span class="badge-type">[${m.type||'미지정'}]</span> ${textSnippet}</div>
+        let html = '';
+        
+        if (isGrouped) {
+            // 그룹(동) -> 도면별로 데이터 분류
+            const groupedData = {};
+            filtered.forEach(m => {
+                if (!groupedData[m._gName]) groupedData[m._gName] = {};
+                if (!groupedData[m._gName][m._pName]) groupedData[m._gName][m._pName] = [];
+                groupedData[m._gName][m._pName].push(m);
+            });
+
+            for (const gName in groupedData) {
+                html += `<div style="background: #2c3e50; color: white; padding: 8px 12px; border-radius: 6px; font-size: 14px; font-weight: bold; margin-top: 15px; margin-bottom: 5px;">📁 ${gName}</div>`;
+                for (const pName in groupedData[gName]) {
+                    html += `<div style="background: #ecf0f1; color: #2c3e50; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-bottom: 5px; margin-left: 10px; border-left: 3px solid #3498db;">📄 ${pName}</div>`;
+                    html += `<div class="marker-list" style="margin-left: 10px; margin-bottom: 10px;">`;
+                    groupedData[gName][pName].forEach(m => {
+                        const isCompleted = m.status === 'completed'; 
+                        const textSnippet = m.desc ? m.desc : '<span style="color:#aaa;">내용 미입력</span>'; 
+                        const pinColor = isCompleted ? '#27ae60' : getTypeColor(m.type || '미지정');
+                        html += `
+                            <div class="marker-list-item" onclick="jumpToMarkerFromGlobal('${m._pId}', ${m.id})">
+                                <div class="marker-num" style="background-color:${pinColor};">${m._idx + 1}</div>
+                                <div style="flex-grow:1; min-width:0;">
+                                    <div class="marker-desc"><span class="badge-type">[${m.type||'미지정'}]</span> ${textSnippet}</div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    html += `</div>`;
+                }
+            }
+        } else {
+            // 그룹핑 해제 시 일렬로 나열 (기존 방식)
+            html += `<div class="marker-list">`;
+            filtered.forEach(m => {
+                const isCompleted = m.status === 'completed'; 
+                const textSnippet = m.desc ? m.desc : '<span style="color:#aaa;">내용 미입력</span>'; 
+                const pinColor = isCompleted ? '#27ae60' : getTypeColor(m.type || '미지정');
+                const locInfo = `<div style="font-size:11px; color:#3498db; margin-bottom:3px; font-weight:bold;">[${m._gName}] ${m._pName}</div>`;
+                html += `
+                    <div class="marker-list-item" onclick="jumpToMarkerFromGlobal('${m._pId}', ${m.id})">
+                        <div class="marker-num" style="background-color:${pinColor};">${m._idx + 1}</div>
+                        <div style="flex-grow:1; min-width:0;">
+                            ${locInfo}
+                            <div class="marker-desc"><span class="badge-type">[${m.type||'미지정'}]</span> ${textSnippet}</div>
+                        </div>
                     </div>
-                </div>
-            `;
-        });
-        html += `</div>`;
+                `;
+            });
+            html += `</div>`;
+        }
+        
         content.innerHTML = html;
     }
 
     function jumpToMarkerFromGlobal(planId, markerId) {
-        closeGlobalListModal(); // 모달 닫기
-        if (currentPlanId !== planId) changeFloorPlan(planId); // 도면 이동
-        selectMarker(markerId); // 마커 상세 열기
+        closeGlobalListModal(); 
+        if (currentPlanId !== planId) changeFloorPlan(planId); 
+        selectMarker(markerId); 
     }
 
     // ==========================================
@@ -1284,7 +1317,6 @@
         printWin.document.write(reportHTML); printWin.document.close();
     }
 
-    // 초기 앱 로드 및 실행
     window.onload = async function() { await bootstrapApp(); };
 </script>
 
