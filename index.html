@@ -197,8 +197,8 @@
             .app-container { height: auto; display: flex; flex-direction: column; padding: 10px; gap: 10px; } 
             .main-layout { flex-direction: column; gap: 10px; } 
             .sidebar-left, .sidebar-right { width: 100%; flex-shrink: 0; height: auto; } 
-            .main-content { min-height: 400px; }
-            .viewport-wrapper { min-height: 300px; padding: 5px;}
+            .main-content { min-height: unset !important; height: 55vh; }
+            .viewport-wrapper { flex-grow: 1; height: auto; min-height: 0 !important; overflow: auto !important; padding: 5px; }
             .panel { padding: 12px; }
             .top-header { flex-direction: column; align-items: stretch; padding: 10px; }
             .user-info-box { justify-content: space-between; }
@@ -717,7 +717,21 @@
 
     let isPinching = false; let pinchStartDist = 0;
     zoomArea.addEventListener('touchstart', e => { if(e.touches.length === 2) { isPinching = true; pinchStartDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY); } });
-    zoomArea.addEventListener('touchmove', e => { if(e.touches.length === 2 && isPinching) { e.preventDefault(); let dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY); if(pinchStartDist) { if(dist > pinchStartDist + 15) { zoomIn(); pinchStartDist = dist; } else if(dist < pinchStartDist - 15) { zoomOut(); pinchStartDist = dist; } } } }, {passive: false});
+    
+    // [수정된 부분] 터치 스크롤 제어 강제 적용
+    zoomArea.addEventListener('touchmove', e => { 
+        if (e.touches.length === 2 && isPinching) { 
+            e.preventDefault(); 
+            let dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY); 
+            if(pinchStartDist) { 
+                if(dist > pinchStartDist + 15) { zoomIn(); pinchStartDist = dist; } 
+                else if(dist < pinchStartDist - 15) { zoomOut(); pinchStartDist = dist; } 
+            } 
+        } else if (isPanning) {
+            e.preventDefault();
+        }
+    }, {passive: false});
+    
     zoomArea.addEventListener('touchend', e => { if(e.touches.length < 2) isPinching = false; });
 
     function renderMarkers() {
@@ -737,7 +751,6 @@
     function selectMarker(id) { selectedMarkerId = id; renderMarkers(); renderRightPanel(); }
     function deselectMarker() { selectedMarkerId = null; renderMarkers(); renderRightPanel(); }
 
-    // 💡 [핵심 픽스] 도면 패닝 이중 처리 로직
     let draggingMarkerId = null; let draggingMarkerEl = null; let isMarkerMoved = false; 
     let isPanning = false; let panStartX = 0; let panStartY = 0; 
     let scrollStartX1 = 0; let scrollStartY1 = 0; let scrollStartX2 = 0; let scrollStartY2 = 0; 
