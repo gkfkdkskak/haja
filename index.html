@@ -571,6 +571,135 @@
         });
     }
 
+    // ============================================================
+    // 📸 사진 Google Drive 저장 / 1MB 이하 자동 압축
+    // ============================================================
+    const DEFECT_DRIVE_GAS_URL = "https://script.google.com/macros/s/AKfycbypKdpp5DOD00VZV29Q5F_g_1VmlypQzZGjHBcqM5rju5FHBAPY36m--ssfYquDn4jmQ/exec";
+    const DEFECT_PHOTO_MAX_BYTES = 1024 * 1024; // 1MB
+
+    function dataUrlByteLength(dataUrl) {
+        const comma = dataUrl.indexOf(',');
+        if (comma < 0) return 0;
+        const base64 = dataUrl.slice(comma + 1);
+        return Math.floor(base64.length * 3 / 4) - (base64.endsWith('==') ? 2 : (base64.endsWith('=') ? 1 : 0));
+    }
+
+    async function compressPhotoTo1MB(file) {
+        const sourceDataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = e => resolve(e.target.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+
+        const img = await new Promise((resolve, reject) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = reject;
+            image.src = sourceDataUrl;
+        });
+
+        let width = img.width || 1280;
+        let height = img.height || 1280;
+        const maxDimension = 1600;
+        if (Math.max(width, height) > maxDimension) {
+            const ratio = maxDimension / Math.max(width, height);
+            width = Math.max(1, Math.round(width * ratio));
+            height = Math.max(1, Math.round(height * ratio));
+        }
+
+        let quality = 0.82;
+        let dataUrl = '';
+        for (let i = 0; i < 12; i++) {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d', {alpha:false});
+            ctx.drawImage(img, 0, 0, width, height);
+            dataUrl = canvas.toDataURL('image/jpeg', quality);
+            const bytes = dataUrlByteLength(dataUrl);
+            if (bytes > 0 && bytes <= DEFECT_PHOTO_MAX_BYTES) {
+                return { dataUrl, bytes, width, height, quality };
+            }
+            if (quality > 0.45) {
+                quality -= 0.06;
+            } else {
+                width = Math.max(640, Math.round(width * 0.85));
+                height = Math.max(640, Math.round(height * 0.85));
+                quality = 0.72;
+            }
+        }
+
+        const finalBytes = dataUrlByteLength(dataUrl);
+        if (finalBytes > DEFECT_PHOTO_MAX_BYTES) {
+            throw new Error('사진을 1MB 이하로 압축하지 못했습니다. 더 작은 사진으로 다시 시도해주세요.');
+        }
+        return { dataUrl, bytes: finalBytes, width, height, quality };
+    }
+
+    async function normalizePhotoTo1MB(dataUrl) {
+        if (dataUrlByteLength(dataUrl) <= DEFECT_PHOTO_MAX_BYTES) return dataUrl;
+        const blob = await (await fetch(dataUrl)).blob();
+        const tempFile = new File([blob], 'photo.jpg', {type:'image/jpeg'});
+        const compressed = await compressPhotoTo1MB(tempFile);
+        return compressed.dataUrl;
+    }
+
+    async function uploadDefectPhotoToDrive(dataUrl, meta) {
+        const payload = {
+            event: 'defect_photo',
+            action: 'upload',
+            fileName: meta.fileName,
+            mimeType: 'image/jpeg',
+            base64: dataUrl.split(',')[1],
+            groupName: meta.groupName || '미지정 현장',
+            planName: meta.planName || '미지정 도면',
+            markerId: String(meta.markerId || ''),
+            photoType: meta.photoType || 'before',
+            uploader: getCurrentUser()
+        };
+        const res = await fetch(DEFECT_DRIVE_GAS_URL, {
+            method: 'POST',
+            headers: {'Content-Type': 'text/plain'},
+            body: JSON.stringify(payload)
+        });
+        const text = await res.text();
+        let result;
+        try { result = JSON.parse(text); } catch (e) { throw new Error('Google Drive 응답을 읽지 못했습니다.'); }
+        if (!result.ok) throw new Error(result.error || 'Google Drive 업로드 실패');
+        return result.file;
+    }
+
+    async function deleteDefectDriveFiles(fileIds) {
+        const ids = (fileIds || []).filter(Boolean);
+        if (!ids.length) return;
+        try {
+            await fetch(DEFECT_DRIVE_GAS_URL, {
+                method: 'POST',
+                headers: {'Content-Type': 'text/plain'},
+                body: JSON.stringify({ event: 'defect_photo', action: 'delete', fileIds: ids })
+            });
+        } catch (e) {
+            console.warn('Drive 파일 삭제 요청 실패:', e);
+        }
+    }
+
+    function getPhotoSrc(photo) {
+        if (!photo) return '';
+        if (typeof photo === 'string') return photo;
+        return photo.url || photo.viewUrl || '';
+    }
+
+    function getPhotoDriveId(photo) {
+        if (!photo || typeof photo === 'string') return '';
+        return photo.fileId || '';
+    }
+
+    function getPhotoDownloadUrl(photo) {
+        const src = getPhotoSrc(photo);
+        return src || '';
+    }
+
     function addWatermarkToPhoto(base64Url, authorName) {
         return new Promise((resolve) => {
             const img = new Image(); img.src = base64Url;
@@ -679,7 +808,7 @@
     function moveGroup(gId, dir) { const idx = groups.findIndex(g => g.id === gId); const target = idx + dir; if (target < 0 || target >= groups.length) return; const t = groups[idx]; groups[idx] = groups[target]; groups[target] = t; renderSidebar(); syncMetaToCloud(); }
     function addGroup() { const name = prompt('새 그룹 이름:'); if (name && name.trim()) { groups.push({ id: 'g_' + Date.now(), name: name.trim(), isCollapsed: false, plans: [] }); renderSidebar(); syncMetaToCloud(); } }
     function editGroup(gId) { const g = groups.find(g => g.id === gId); const name = prompt('그룹 이름 수정:', g.name); if (name && name.trim()) { g.name = name.trim(); renderSidebar(); syncMetaToCloud(); } }
-    function deleteGroup(gId) { if (!confirm('삭제하시겠습니까?')) return; const g = groups.find(g => g.id === gId); g.plans.forEach(p => { (markersByPlan[p.id] || []).forEach(m => deleteMarkerFromCloud(m.id)); delete markersByPlan[p.id]; deletePlanFromCloud(p.id); }); groups = groups.filter(g => g.id !== gId); if (g.plans.some(p => p.id === currentPlanId)) clearViewer(); renderSidebar(); syncMetaToCloud(); }
+    function deleteGroup(gId) { if (!confirm('삭제하시겠습니까?')) return; const g = groups.find(g => g.id === gId); const driveIds = []; g.plans.forEach(p => { (markersByPlan[p.id] || []).forEach(m => { [...(m.photoUrls || []), ...(m.afterPhotoUrls || [])].forEach(photo => { const id = getPhotoDriveId(photo); if(id) driveIds.push(id); }); deleteMarkerFromCloud(m.id); }); delete markersByPlan[p.id]; deletePlanFromCloud(p.id); }); if(driveIds.length) deleteDefectDriveFiles(driveIds); groups = groups.filter(g => g.id !== gId); if (g.plans.some(p => p.id === currentPlanId)) clearViewer(); renderSidebar(); syncMetaToCloud(); }
     
     function triggerUpload(gId) { targetGroupIdForUpload = gId; globalPlanUpload.click(); }
     globalPlanUpload.addEventListener('change', async function(e) {
@@ -715,7 +844,7 @@
     });
     
     function editPlan(gId, pId) { const g = groups.find(g => g.id === gId); const p = g.plans.find(p => p.id === pId); const n = prompt('이름 수정:', p.name); if (n && n.trim()) { p.name = n.trim(); if(currentPlanId === pId) document.getElementById('currentPlanTitle').innerText = `[${g.name}] ${p.name}`; renderSidebar(); syncMetaToCloud(); } }
-    function deletePlan(gId, pId) { if (!confirm('삭제하시겠습니까?')) return; const g = groups.find(g => g.id === gId); g.plans = g.plans.filter(p => p.id !== pId); (markersByPlan[pId] || []).forEach(m => deleteMarkerFromCloud(m.id)); delete markersByPlan[pId]; deletePlanFromCloud(pId); if (currentPlanId === pId) clearViewer(); renderSidebar(); syncMetaToCloud(); }
+    function deletePlan(gId, pId) { if (!confirm('삭제하시겠습니까?')) return; const g = groups.find(g => g.id === gId); const markers = markersByPlan[pId] || []; const driveIds = []; markers.forEach(m => { [...(m.photoUrls || []), ...(m.afterPhotoUrls || [])].forEach(photo => { const id = getPhotoDriveId(photo); if(id) driveIds.push(id); }); deleteMarkerFromCloud(m.id); }); if(driveIds.length) deleteDefectDriveFiles(driveIds); g.plans = g.plans.filter(p => p.id !== pId); delete markersByPlan[pId]; deletePlanFromCloud(pId); if (currentPlanId === pId) clearViewer(); renderSidebar(); syncMetaToCloud(); }
     function clearViewer() { currentPlanId = null; planImage.src = ''; document.getElementById('currentPlanTitle').innerText = '도면을 선택해주세요.'; document.getElementById('scaleInputWrapper').style.display = 'none'; document.querySelectorAll('.pin-container').forEach(pin => pin.remove()); selectedMarkerId = null; renderRightPanel(); }
 
     function changeFloorPlan(planId) {
@@ -881,13 +1010,13 @@
             const capacityHtml = `
                 <div style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:15px; border:1px solid #dfe4ea;">
                     <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:bold; margin-bottom:5px; color:#555;">
-                        <span>💾 마커 저장 용량 (1MB 제한)</span>
+                        <span>💾 마커 데이터 용량 (사진은 Google Drive)</span>
                         <span style="color:${barColor}">${sizeKB}KB / 1024KB (${percent}%)</span>
                     </div>
                     <div style="height:8px; background:#eee; border-radius:4px; overflow:hidden;">
                         <div style="height:100%; width:${percent}%; background:${barColor}; transition:0.3s;"></div>
                     </div>
-                    ${percent > 90 ? `<div style="color:#e74c3c; font-size:10px; margin-top:4px; font-weight:bold;">⚠️ 용량이 거의 꽉 찼습니다! (사진 추가 시 저장 실패 위험)</div>` : ''}
+                    ${percent > 90 && marker.photoUrls.some(p => typeof p === 'string') ? `<div style="color:#e74c3c; font-size:10px; margin-top:4px; font-weight:bold;">⚠️ 예전 Base64 사진이 남아 있습니다. 새 사진은 Google Drive에 저장됩니다.</div>` : ''}
                 </div>
             `;
 
@@ -912,7 +1041,7 @@
                 marker.photoUrls.forEach((url, pIdx) => { 
                     html += `
                         <div class="photo-card">
-                            <img src="${url}" onclick="openImageMarkupModal(${marker.id}, 'before', ${pIdx})" title="마크업 그리기">
+                            <img src="${getPhotoSrc(url)}" onclick="openImageMarkupModal(${marker.id}, 'before', ${pIdx})" title="마크업 그리기">
                             <button class="del-photo-btn" onclick="removeMarkerPhoto(event, 'before', ${pIdx})" title="삭제">✕</button>
                             <button class="dl-photo-btn" onclick="downloadMarkerPhoto(event, ${marker.id}, 'before', ${pIdx})" title="사진 다운로드">⬇️</button>
                         </div>`; 
@@ -930,7 +1059,7 @@
                 marker.afterPhotoUrls.forEach((url, pIdx) => { 
                     html += `
                         <div class="photo-card">
-                            <img src="${url}" onclick="openImageMarkupModal(${marker.id}, 'after', ${pIdx})" title="마크업 그리기">
+                            <img src="${getPhotoSrc(url)}" onclick="openImageMarkupModal(${marker.id}, 'after', ${pIdx})" title="마크업 그리기">
                             <button class="del-photo-btn" onclick="removeMarkerPhoto(event, 'after', ${pIdx})" title="삭제">✕</button>
                             <button class="dl-photo-btn" onclick="downloadMarkerPhoto(event, ${marker.id}, 'after', ${pIdx})" title="사진 다운로드">⬇️</button>
                         </div>`; 
@@ -948,24 +1077,66 @@
     async function uploadMarkerPhotos(e, type) {
         const files = e.target.files;
         if (files && files.length > 0) {
-            showLoading('사진을 클라우드에 안전하게 저장 중입니다...');
+            showLoading('사진을 1MB 이하로 압축하고 Google Drive에 저장 중입니다...');
             try {
                 const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId);
-                if (marker) {
-                    const targetArray = type === 'after' ? (marker.afterPhotoUrls = marker.afterPhotoUrls || []) : (marker.photoUrls = marker.photoUrls || []); const origArray = type === 'after' ? (marker.originalAfterPhotoUrls = marker.originalAfterPhotoUrls || []) : (marker.originalPhotoUrls = marker.originalPhotoUrls || []);
-                    for (let i = 0; i < files.length; i++) { const compressedBase64 = await compressImage(files[i], 1280, 1280, 0.7); const watermarkedBase64 = await addWatermarkToPhoto(compressedBase64, getCurrentUser()); targetArray.push(watermarkedBase64); origArray.push(watermarkedBase64); }
-                    renderRightPanel(); syncMarkerToCloud(marker.id, currentPlanId); 
+                if (!marker) return;
+                const planInfo = {name: '미지정 도면'};
+                let groupName = '미지정 현장';
+                groups.forEach(g => {
+                    const p = g.plans.find(x => x.id === currentPlanId);
+                    if (p) { planInfo.name = p.name; groupName = g.name; }
+                });
+                const targetArray = type === 'after' ? (marker.afterPhotoUrls = marker.afterPhotoUrls || []) : (marker.photoUrls = marker.photoUrls || []);
+
+                for (let i = 0; i < files.length; i++) {
+                    const compressed = await compressPhotoTo1MB(files[i]);
+                    let watermarkedBase64 = await addWatermarkToPhoto(compressed.dataUrl, getCurrentUser());
+                    watermarkedBase64 = await normalizePhotoTo1MB(watermarkedBase64);
+                    const finalBytes = dataUrlByteLength(watermarkedBase64);
+                    if (finalBytes > DEFECT_PHOTO_MAX_BYTES) throw new Error('사진을 1MB 이하로 압축하지 못했습니다.');
+
+                    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+                    const safeType = type === 'after' ? 'after' : 'before';
+                    const fileName = `${marker.id}_${safeType}_${stamp}_${i + 1}.jpg`;
+                    const driveFile = await uploadDefectPhotoToDrive(watermarkedBase64, {
+                        fileName,
+                        groupName,
+                        planName: planInfo.name,
+                        markerId: marker.id,
+                        photoType: safeType
+                    });
+                    targetArray.push(driveFile);
+                    const originalArray = type === 'after' ? (marker.originalAfterPhotoUrls = marker.originalAfterPhotoUrls || []) : (marker.originalPhotoUrls = marker.originalPhotoUrls || []);
+                    originalArray.push(Object.assign({}, driveFile));
                 }
-            } catch (err) { alert('사진 업로드 실패: ' + err.message); }
-            hideLoading();
-        } e.target.value = '';
+
+                // 원본 배열에는 사진 데이터가 아니라 Drive 파일 참조만 보관
+                marker.originalPhotoUrls = marker.originalPhotoUrls || [];
+                marker.originalAfterPhotoUrls = marker.originalAfterPhotoUrls || [];
+                renderRightPanel();
+                await syncMarkerToCloud(marker.id, currentPlanId);
+            } catch (err) {
+                alert('사진 업로드 실패: ' + err.message);
+            } finally {
+                hideLoading();
+            }
+        }
+        e.target.value = '';
     }
     
     function downloadMarkerPhoto(event, markerId, type, pIdx) {
         if(event) event.stopPropagation();
         const marker = markersByPlan[currentPlanId].find(m => m.id === markerId); if (!marker) return;
-        const targetArray = type === 'after' ? marker.afterPhotoUrls : marker.photoUrls; const base64Url = targetArray[pIdx]; if (!base64Url) return;
-        const link = document.createElement('a'); link.href = base64Url; link.download = `marker_${markerId}_${type}_${pIdx + 1}.jpg`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
+        const targetArray = type === 'after' ? marker.afterPhotoUrls : marker.photoUrls;
+        const photo = targetArray[pIdx];
+        const base64Url = getPhotoDownloadUrl(photo);
+        if (!base64Url) return;
+        const link = document.createElement('a');
+        link.href = base64Url;
+        link.download = `marker_${markerId}_${type}_${pIdx + 1}.jpg`;
+        link.target = '_blank';
+        document.body.appendChild(link); link.click(); document.body.removeChild(link);
     }
 
     function renderMarkerListOnly() {
@@ -1027,10 +1198,22 @@
 
     function removeMarkerPhoto(event, type, photoIndex) {
         if(event) event.stopPropagation();
-        if(confirm("지우시겠습니까?")) { const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId); if (marker) { const targetArray = type === 'after' ? marker.afterPhotoUrls : marker.photoUrls; const origArray = type === 'after' ? marker.originalAfterPhotoUrls : marker.originalPhotoUrls; if (targetArray) targetArray.splice(photoIndex, 1); if (origArray) origArray.splice(photoIndex, 1); renderRightPanel(); syncMarkerToCloud(marker.id, currentPlanId); } }
+        if(confirm("지우시겠습니까?")) {
+            const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId);
+            if (marker) {
+                const targetArray = type === 'after' ? marker.afterPhotoUrls : marker.photoUrls;
+                const origArray = type === 'after' ? marker.originalAfterPhotoUrls : marker.originalPhotoUrls;
+                const removed = targetArray ? targetArray[photoIndex] : null;
+                const driveId = getPhotoDriveId(removed);
+                if (targetArray) targetArray.splice(photoIndex, 1);
+                if (origArray && photoIndex < origArray.length) origArray.splice(photoIndex, 1);
+                if (driveId) deleteDefectDriveFiles([driveId]);
+                renderRightPanel(); syncMarkerToCloud(marker.id, currentPlanId);
+            }
+        }
     }
 
-    function deleteSelectedMarker() { if(confirm("삭제하시겠습니까?")) { const mId = selectedMarkerId; markersByPlan[currentPlanId] = markersByPlan[currentPlanId].filter(m => m.id !== mId); deselectMarker(); deleteMarkerFromCloud(mId); } }
+    function deleteSelectedMarker() { if(confirm("삭제하시겠습니까?")) { const mId = selectedMarkerId; const marker = (markersByPlan[currentPlanId] || []).find(m => m.id === mId); const driveIds = []; if(marker) { [...(marker.photoUrls || []), ...(marker.afterPhotoUrls || [])].forEach(photo => { const id = getPhotoDriveId(photo); if(id) driveIds.push(id); }); } markersByPlan[currentPlanId] = markersByPlan[currentPlanId].filter(m => m.id !== mId); deselectMarker(); if(driveIds.length) deleteDefectDriveFiles(driveIds); deleteMarkerFromCloud(mId); } }
 
     // ==========================================
     // 전체 현장 목록 모달 로직 (그룹별 보기 적용)
@@ -1177,7 +1360,7 @@
 
     function openImageMarkupModal(markerId, type, pIdx) {
         const marker = markersByPlan[currentPlanId].find(m => m.id === markerId); if (!marker) return; currentEditMarkerId = markerId; currentEditPhotoType = type; currentEditPhotoIndex = pIdx; markupHistory = []; 
-        const currentUrl = type === 'after' ? marker.afterPhotoUrls[pIdx] : marker.photoUrls[pIdx]; currentOriginalImageUrl = type === 'after' ? marker.originalAfterPhotoUrls[pIdx] : marker.originalPhotoUrls[pIdx];
+        const currentUrl = type === 'after' ? marker.afterPhotoUrls[pIdx] : marker.photoUrls[pIdx]; currentOriginalImageUrl = getPhotoSrc(type === 'after' ? marker.originalAfterPhotoUrls[pIdx] : marker.originalPhotoUrls[pIdx]) || getPhotoSrc((type === 'after' ? marker.afterPhotoUrls[pIdx] : marker.photoUrls[pIdx]));
         document.getElementById('imageMarkupModal').style.display = 'flex';
         
         let img = new Image(); 
@@ -1187,7 +1370,7 @@
             markupCanvas.width = img.width * ratio; markupCanvas.height = img.height * ratio; 
             mctx.globalAlpha = 1.0; mctx.drawImage(img, 0, 0, markupCanvas.width, markupCanvas.height); saveHistory(); 
         }
-        img.src = currentUrl; 
+        img.src = getPhotoSrc(currentUrl); 
     }
 
     function closeImageMarkupModal() { document.getElementById('imageMarkupModal').style.display = 'none'; }
@@ -1207,7 +1390,45 @@
         img.src = currentOriginalImageUrl; 
     }
 
-    async function saveMarkupCanvas() { const marker = markersByPlan[currentPlanId].find(m => m.id === currentEditMarkerId); if(marker) { showLoading('마크업을 저장 중입니다...'); try { const newUrlBase64 = markupCanvas.toDataURL('image/jpeg', 0.9); if(currentEditPhotoType === 'before') marker.photoUrls[currentEditPhotoIndex] = newUrlBase64; else marker.afterPhotoUrls[currentEditPhotoIndex] = newUrlBase64; renderRightPanel(); closeImageMarkupModal(); syncMarkerToCloud(marker.id, currentPlanId); } catch (err) { alert('마크업 저장 실패: ' + err.message); } hideLoading(); } }
+    async function saveMarkupCanvas() {
+        const marker = markersByPlan[currentPlanId].find(m => m.id === currentEditMarkerId);
+        if(!marker) return;
+        showLoading('마크업 이미지를 1MB 이하로 압축하고 Google Drive에 저장 중입니다...');
+        try {
+            const canvasDataUrl = markupCanvas.toDataURL('image/jpeg', 0.88);
+            let compressedDataUrl = canvasDataUrl;
+            if (dataUrlByteLength(compressedDataUrl) > DEFECT_PHOTO_MAX_BYTES) {
+                const blob = await (await fetch(compressedDataUrl)).blob();
+                const compressedFile = new File([blob], 'markup.jpg', {type:'image/jpeg'});
+                const compressed = await compressPhotoTo1MB(compressedFile);
+                compressedDataUrl = compressed.dataUrl;
+            }
+            let finalDataUrl = await addWatermarkToPhoto(compressedDataUrl, getCurrentUser());
+            finalDataUrl = await normalizePhotoTo1MB(finalDataUrl);
+            if (dataUrlByteLength(finalDataUrl) > DEFECT_PHOTO_MAX_BYTES) throw new Error('마크업 이미지를 1MB 이하로 압축하지 못했습니다.');
+
+            const oldArray = currentEditPhotoType === 'before' ? marker.photoUrls : marker.afterPhotoUrls;
+            const originalArray = currentEditPhotoType === 'before' ? (marker.originalPhotoUrls || []) : (marker.originalAfterPhotoUrls || []);
+            const oldPhoto = oldArray[currentEditPhotoIndex];
+            const originalPhoto = originalArray[currentEditPhotoIndex];
+            const oldDriveId = getPhotoDriveId(oldPhoto);
+            const originalDriveId = getPhotoDriveId(originalPhoto);
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const planInfo = {name:'미지정 도면'}; let groupName='미지정 현장';
+            groups.forEach(g => { const pp = g.plans.find(x => x.id === currentPlanId); if(pp){ planInfo.name=pp.name; groupName=g.name; } });
+            const driveFile = await uploadDefectPhotoToDrive(finalDataUrl, {
+                fileName: `${marker.id}_${currentEditPhotoType}_markup_${stamp}.jpg`,
+                groupName, planName: planInfo.name, markerId: marker.id, photoType: currentEditPhotoType
+            });
+            oldArray[currentEditPhotoIndex] = driveFile;
+            if (oldDriveId && oldDriveId !== originalDriveId) await deleteDefectDriveFiles([oldDriveId]);
+            renderRightPanel(); closeImageMarkupModal(); await syncMarkerToCloud(marker.id, currentPlanId);
+        } catch (err) {
+            alert('마크업 저장 실패: ' + err.message);
+        } finally {
+            hideLoading();
+        }
+    }
     
     function getCanvasPos(e) { const rect = markupCanvas.getBoundingClientRect(); if(e.touches) return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top }; return { x: e.clientX - rect.left, y: e.clientY - rect.top }; }
     
@@ -1324,8 +1545,8 @@
             defectCardsHTML += `<div style="page-break-after: auto; page-break-inside: avoid;"><h2 style="color:#2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 8px; margin-top: 30px; margin-bottom: 20px;"><span style="background:#3498db; color:white; padding:4px 10px; border-radius:4px; font-size:18px;">🏷️ ${type}</span> 하자 항목 (총 ${markersOfType.length}건)</h2>`;
             markersOfType.forEach((m) => {
                 const originalIdx = (markersByPlan[currentPlanId] || []).findIndex(orig => orig.id === m.id); const isCompleted = m.status === 'completed'; const statusBadgeHTML = isCompleted ? `<span style="background:#d4efdf; color:#27ae60; padding:4px 10px; border-radius:4px; font-size:13px; font-weight:bold;">🟢 완료</span>` : `<span style="background:#fadbd8; color:#e74c3c; padding:4px 10px; border-radius:4px; font-size:13px; font-weight:bold;">🔴 미조치</span>`;
-                let beforePhotosHTML = ''; if (m.photoUrls && m.photoUrls.length > 0) { m.photoUrls.forEach((url) => { beforePhotosHTML += `<img src="${url}" style="width:100%; max-width:300px; height:200px; object-fit:cover; border-radius:6px; border:1px solid #ccc;">`; }); } else { beforePhotosHTML = '<div style="color:#aaa; font-size:12px; padding:20px; background:#f8f9fa; border-radius:4px; text-align:center; width:100%;">사진 없음</div>'; }
-                let afterPhotosHTML = ''; if (m.afterPhotoUrls && m.afterPhotoUrls.length > 0) { m.afterPhotoUrls.forEach((url) => { afterPhotosHTML += `<img src="${url}" style="width:100%; max-width:300px; height:200px; object-fit:cover; border-radius:6px; border:1px solid #ccc;">`; }); } else { afterPhotosHTML = '<div style="color:#aaa; font-size:12px; padding:20px; background:#f8f9fa; border-radius:4px; text-align:center; width:100%;">조치 사진 없음</div>'; }
+                let beforePhotosHTML = ''; if (m.photoUrls && m.photoUrls.length > 0) { m.photoUrls.forEach((url) => { beforePhotosHTML += `<img src="${getPhotoSrc(url)}" style="width:100%; max-width:300px; height:200px; object-fit:cover; border-radius:6px; border:1px solid #ccc;">`; }); } else { beforePhotosHTML = '<div style="color:#aaa; font-size:12px; padding:20px; background:#f8f9fa; border-radius:4px; text-align:center; width:100%;">사진 없음</div>'; }
+                let afterPhotosHTML = ''; if (m.afterPhotoUrls && m.afterPhotoUrls.length > 0) { m.afterPhotoUrls.forEach((url) => { afterPhotosHTML += `<img src="${getPhotoSrc(url)}" style="width:100%; max-width:300px; height:200px; object-fit:cover; border-radius:6px; border:1px solid #ccc;">`; }); } else { afterPhotosHTML = '<div style="color:#aaa; font-size:12px; padding:20px; background:#f8f9fa; border-radius:4px; text-align:center; width:100%;">조치 사진 없음</div>'; }
                 let historyHtml = ''; if (m.history && m.history.length > 0) { historyHtml = m.history.map(h => `<div style="margin-bottom:6px; padding-bottom:6px; border-bottom:1px dashed #ccc; font-size:13px;"><div style="font-size:11px; color:#777;"><b>${h.author}</b> ${h.date}</div><div>${h.text}</div></div>`).join(''); } else { historyHtml = '<div style="color:#aaa; font-size:12px;">이력 없음</div>'; }
 
                 defectCardsHTML += `
