@@ -645,10 +645,66 @@
         return compressed.dataUrl;
     }
 
+    function makeDriveRequestId() {
+        return 'up_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+    }
+
+    async function pollDriveUploadResult(requestId, maxAttempts = 30) {
+        return await new Promise((resolve, reject) => {
+            let attempt = 0;
+            const callbackName = '__driveUploadCallback_' + Date.now() + '_' + Math.random().toString(36).slice(2);
+            let timer = null;
+
+            const cleanup = () => {
+                if (timer) clearTimeout(timer);
+                try { delete window[callbackName]; } catch (e) {}
+                const oldScript = document.getElementById(callbackName);
+                if (oldScript) oldScript.remove();
+            };
+
+            window[callbackName] = (result) => {
+                if (result && result.pending) {
+                    if (++attempt >= maxAttempts) {
+                        cleanup();
+                        reject(new Error('Google Drive 업로드 결과를 확인하지 못했습니다. Apps Script 실행 기록을 확인해주세요.'));
+                        return;
+                    }
+                    timer = setTimeout(load, 1000);
+                    return;
+                }
+                cleanup();
+                if (!result || !result.ok) {
+                    reject(new Error((result && result.error) || 'Google Drive 업로드 실패'));
+                    return;
+                }
+                resolve(result.file);
+            };
+
+            const load = () => {
+                const script = document.createElement('script');
+                script.id = callbackName;
+                script.onerror = () => {
+                    if (++attempt >= maxAttempts) {
+                        cleanup();
+                        reject(new Error('Google Drive 결과 조회에 실패했습니다. 웹앱 배포 권한을 확인해주세요.'));
+                    } else {
+                        timer = setTimeout(load, 1000);
+                    }
+                };
+                script.src = DEFECT_DRIVE_GAS_URL + '?action=photoResult&requestId=' + encodeURIComponent(requestId) + '&callback=' + encodeURIComponent(callbackName) + '&_=' + Date.now();
+                document.body.appendChild(script);
+            };
+
+            load();
+        });
+    }
+
     async function uploadDefectPhotoToDrive(dataUrl, meta) {
+        const requestId = makeDriveRequestId();
         const payload = {
             event: 'defect_photo',
             action: 'upload',
+            requestId,
             fileName: meta.fileName,
             mimeType: 'image/jpeg',
             base64: dataUrl.split(',')[1],
@@ -658,16 +714,22 @@
             photoType: meta.photoType || 'before',
             uploader: getCurrentUser()
         };
-        const res = await fetch(DEFECT_DRIVE_GAS_URL, {
-            method: 'POST',
-            headers: {'Content-Type': 'text/plain'},
-            body: JSON.stringify(payload)
-        });
-        const text = await res.text();
-        let result;
-        try { result = JSON.parse(text); } catch (e) { throw new Error('Google Drive 응답을 읽지 못했습니다.'); }
-        if (!result.ok) throw new Error(result.error || 'Google Drive 업로드 실패');
-        return result.file;
+
+        try {
+            const res = await fetch(DEFECT_DRIVE_GAS_URL, {
+                method: 'POST',
+                headers: {'Content-Type': 'text/plain'},
+                body: JSON.stringify(payload)
+            });
+            const text = await res.text();
+            let result;
+            try { result = JSON.parse(text); } catch (e) { throw new Error('Google Drive 응답을 읽지 못했습니다.'); }
+            if (!result.ok) throw new Error(result.error || 'Google Drive 업로드 실패');
+            return result.file;
+        } catch (fetchError) {
+            // 브라우저 CORS로 응답을 못 읽는 경우에도 서버 업로드 결과를 JSONP로 확인
+            return await pollDriveUploadResult(requestId);
+        }
     }
 
     async function deleteDefectDriveFiles(fileIds) {
