@@ -436,8 +436,9 @@
     // 결과는 JSONP GET으로 확인하므로 CORS/iframe 응답 문제를 사용하지 않습니다.
     // ==========================================================
     const DEFECT_DRIVE_GAS_URL = "https://script.google.com/macros/s/AKfycbypKdpp5DOD00VZV29Q5F_g_1VmlypQzZGjJHBcqM5rju5FHBAPY36m--ssfYquDn4jmQ/exec";
-    const DEFECT_UPLOAD_TARGET_BYTES = 650 * 1024;
+    const DEFECT_UPLOAD_TARGET_BYTES = 600 * 1024;
     const DEFECT_UPLOAD_CHUNK_CHARS = 48 * 1024;
+    const DEFECT_UPLOAD_CONCURRENCY = 4;
 
     function makeDriveRequestId() {
         return 'dp_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
@@ -464,17 +465,23 @@
         if (!base64) throw new Error('사진 데이터가 없습니다.');
         const requestId = makeDriveRequestId();
         const total = Math.ceil(base64.length / DEFECT_UPLOAD_CHUNK_CHARS);
+        let completed = 0;
 
-        for (let i = 0; i < total; i++) {
-            const chunk = base64.slice(i * DEFECT_UPLOAD_CHUNK_CHARS, (i + 1) * DEFECT_UPLOAD_CHUNK_CHARS);
-            await sendDrivePost_({
-                event: 'defect_chunk', action: 'chunk', requestId, index: i, total, chunk,
-                fileName: meta.fileName, mimeType: 'image/jpeg',
-                groupName: meta.groupName, planName: meta.planName,
-                markerId: String(meta.markerId || ''), photoType: meta.photoType || 'before', uploader: meta.uploader || ''
-            });
-            if (progressCb) progressCb(i + 1, total);
-            await waitMs(80);
+        // 조각을 4개씩 병렬 전송하여 순차 전송보다 훨씬 빠르게 업로드합니다.
+        for (let start = 0; start < total; start += DEFECT_UPLOAD_CONCURRENCY) {
+            const jobs = [];
+            for (let i = start; i < Math.min(start + DEFECT_UPLOAD_CONCURRENCY, total); i++) {
+                const chunk = base64.slice(i * DEFECT_UPLOAD_CHUNK_CHARS, (i + 1) * DEFECT_UPLOAD_CHUNK_CHARS);
+                jobs.push(sendDrivePost_({
+                    event: 'defect_chunk', action: 'chunk', requestId, index: i, total, chunk,
+                    fileName: meta.fileName, mimeType: 'image/jpeg',
+                    groupName: meta.groupName, planName: meta.planName,
+                    markerId: String(meta.markerId || ''), photoType: meta.photoType || 'before', uploader: meta.uploader || ''
+                }));
+            }
+            await Promise.all(jobs);
+            completed += jobs.length;
+            if (progressCb) progressCb(completed, total);
         }
 
         await sendDrivePost_({
@@ -484,7 +491,7 @@
             markerId: String(meta.markerId || ''), photoType: meta.photoType || 'before', uploader: meta.uploader || ''
         });
 
-        return await waitForDriveResult_(requestId, 90000);
+        return await waitForDriveResult_(requestId, 45000);
     }
 
     function waitForDriveResult_(requestId, timeoutMs) {
@@ -533,7 +540,7 @@
             }
 
             poll();
-            timer = setInterval(poll, 1200);
+            timer = setInterval(poll, 500);
         });
     }
 
@@ -1132,7 +1139,7 @@
                 const planName = plan ? plan.name : '미지정 도면';
 
                 for (let i = 0; i < files.length; i++) {
-                    let compressed = await compressImage(files[i], 1600, 1600, 0.82);
+                    let compressed = await compressImage(files[i], 1280, 1280, 0.78);
                     compressed = await normalizePhotoUnderBytes(compressed, DEFECT_UPLOAD_TARGET_BYTES);
                     const watermarked = await addWatermarkToPhoto(compressed, getCurrentUser());
                     const finalData = await normalizePhotoUnderBytes(watermarked, DEFECT_UPLOAD_TARGET_BYTES);
