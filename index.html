@@ -577,7 +577,7 @@
     const DEFECT_DRIVE_GAS_URL = "https://script.google.com/macros/s/AKfycbypKdpp5DOD00VZV29Q5F_g_1VmlypQzZGjHBcqM5rju5FHBAPY36m--ssfYquDn4jmQ/exec";
     const DEFECT_PHOTO_MAX_BYTES = 1024 * 1024; // Drive 저장 절대 최대 1MB
     // Base64 전송 시 데이터가 약 4/3로 커지므로, 실제 전송용 사진은 700KB 이하로 맞춥니다.
-    const DEFECT_PHOTO_UPLOAD_TARGET_BYTES = 700 * 1024;
+    const DEFECT_PHOTO_UPLOAD_TARGET_BYTES = 450 * 1024; // POST 전송 여유 확보
 
     function dataUrlByteLength(dataUrl) {
         const comma = dataUrl.indexOf(',');
@@ -634,7 +634,7 @@
 
         const finalBytes = dataUrlByteLength(dataUrl);
         if (finalBytes > DEFECT_PHOTO_UPLOAD_TARGET_BYTES) {
-            throw new Error('사진을 전송 가능한 크기(700KB 이하)로 압축하지 못했습니다. 더 작은 사진으로 다시 시도해주세요.');
+            throw new Error('사진을 전송 가능한 크기(450KB 이하)로 압축하지 못했습니다. 더 작은 사진으로 다시 시도해주세요.');
         }
         return { dataUrl, bytes: finalBytes, width, height, quality };
     }
@@ -651,66 +651,96 @@
         return 'up_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
     }
 
-    function submitDriveForm(fields) {
+    // 실제 사진 전송은 소형 통신 테스트에서 검증된 fetch(no-cors) 방식을 사용합니다.
+    // 응답 본문은 브라우저에서 읽지 않고, 이후 doGet JSONP로 Drive 파일 생성 여부를 확인합니다.
+    function submitDriveNoCorsAndPoll(fields) {
         return new Promise((resolve, reject) => {
             const requestId = String(fields.requestId || ('req_' + Date.now() + '_' + Math.random().toString(36).slice(2)));
-            const frameName = '__defectDriveFrame_' + Date.now() + '_' + Math.random().toString(36).slice(2);
-            const iframe = document.createElement('iframe');
-            iframe.name = frameName;
-            iframe.style.position = 'fixed';
-            iframe.style.width = '1px';
-            iframe.style.height = '1px';
-            iframe.style.left = '-10px';
-            iframe.style.top = '-10px';
-            iframe.style.opacity = '0';
-            iframe.style.pointerEvents = 'none';
-            iframe.setAttribute('aria-hidden', 'true');
+            const fileName = String(fields.fileName || '');
+            const groupName = String(fields.groupName || '미지정 현장');
+            const planName = String(fields.planName || '미지정 도면');
+            const pollName = '__defectPhotoPoll_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+            let settled = false;
+            let pollTimer = null;
+            let tries = 0;
+            const maxTries = 30;
 
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = DEFECT_DRIVE_GAS_URL;
-            form.target = frameName;
-            form.style.display = 'none';
-
-            Object.keys(fields).forEach(key => {
-                const input = document.createElement('input');
-                input.type = 'hidden';
-                input.name = key;
-                input.value = fields[key] == null ? '' : String(fields[key]);
-                form.appendChild(input);
-            });
-
-            let timer = null;
             const cleanup = () => {
-                if (timer) clearTimeout(timer);
-                window.removeEventListener('message', onMessage);
-                try { form.remove(); } catch (e) {}
-                try { iframe.remove(); } catch (e) {}
+                if (pollTimer) clearTimeout(pollTimer);
+                try { window[pollName] = undefined; delete window[pollName]; } catch (e) {}
+            };
+            const fail = (err) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                reject(err instanceof Error ? err : new Error(String(err || 'Google Drive 업로드 실패')));
+            };
+            const done = (result) => {
+                if (settled) return;
+                if (!result || String(result.requestId || '') !== requestId) return;
+                if (result.status === 'pending') {
+                    schedulePoll();
+                    return;
+                }
+                settled = true;
+                cleanup();
+                if (result.ok && result.file) resolve(result.file);
+                else fail(new Error(result.error || 'Google Drive 업로드 실패'));
             };
 
-            const onMessage = (event) => {
-                const data = event && event.data;
-                if (!data || data.type !== 'DEFECT_DRIVE_RESULT' || !data.payload) return;
-                if (String(data.payload.requestId || '') !== requestId) return;
-                cleanup();
-                resolve(data.payload);
-            };
+            function schedulePoll() {
+                if (settled) return;
+                if (tries >= maxTries) {
+                    fail(new Error('Google Drive 응답 시간 초과입니다. Apps Script 실행 기록을 확인해주세요.'));
+                    return;
+                }
+                pollTimer = setTimeout(pollStatus, 700);
+            }
 
-            window.addEventListener('message', onMessage);
-            document.body.appendChild(iframe);
-            document.body.appendChild(form);
+            function pollStatus() {
+                if (settled) return;
+                tries++;
+                const callbackUrl = DEFECT_DRIVE_GAS_URL +
+                    '?action=photo_status' +
+                    '&requestId=' + encodeURIComponent(requestId) +
+                    '&fileName=' + encodeURIComponent(fileName) +
+                    '&groupName=' + encodeURIComponent(groupName) +
+                    '&planName=' + encodeURIComponent(planName) +
+                    '&callback=' + encodeURIComponent(pollName) +
+                    '&_=' + Date.now();
 
-            timer = setTimeout(() => {
-                cleanup();
-                reject(new Error('Google Drive 응답 시간 초과입니다. Apps Script 실행 기록을 확인해주세요.'));
-            }, 30000);
+                const script = document.createElement('script');
+                script.async = true;
+                script.src = callbackUrl;
+                script.onload = () => { try { script.remove(); } catch (e) {} };
+                script.onerror = () => { try { script.remove(); } catch (e) {} schedulePoll(); };
+                document.head.appendChild(script);
+                schedulePoll();
+            }
+
+            window[pollName] = done;
 
             try {
-                form.submit();
-            } catch (submitError) {
-                cleanup();
-                reject(submitError);
+                const body = new URLSearchParams();
+                Object.keys(fields).forEach(key => {
+                    body.append(key, fields[key] == null ? '' : String(fields[key]));
+                });
+                fetch(DEFECT_DRIVE_GAS_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    redirect: 'follow',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    body: body.toString()
+                }).catch(() => {
+                    // no-cors에서는 응답을 읽을 수 없으므로 결과 확인은 계속 JSONP polling으로 진행합니다.
+                });
+            } catch (e) {
+                fail(e);
+                return;
             }
+
+            // 서버가 파일 생성을 시작할 시간을 조금 준 뒤 첫 상태 조회
+            pollTimer = setTimeout(pollStatus, 800);
         });
     }
 
@@ -730,7 +760,7 @@
             uploader: getCurrentUser()
         };
 
-        const result = await submitDriveForm(payload);
+        const result = await submitDriveNoCorsAndPoll(payload);
         if (!result.ok) throw new Error(result.error || 'Google Drive 업로드 실패');
         return result.file;
     }
@@ -740,7 +770,7 @@
         if (!ids.length) return;
         const requestId = 'del_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
         try {
-            await submitDriveForm({
+            await submitDriveNoCorsAndPoll({
                 event: 'defect_photo',
                 action: 'delete',
                 requestId,
@@ -1144,7 +1174,7 @@
     async function uploadMarkerPhotos(e, type) {
         const files = e.target.files;
         if (files && files.length > 0) {
-            showLoading('사진을 전송용으로 압축(700KB 이하)하고 Google Drive에 저장 중입니다...');
+            showLoading('사진을 전송용으로 압축(450KB 이하)하고 Google Drive에 저장 중입니다...');
             try {
                 const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId);
                 if (!marker) return;
