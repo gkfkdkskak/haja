@@ -575,7 +575,9 @@
     // 📸 사진 Google Drive 저장 / 1MB 이하 자동 압축
     // ============================================================
     const DEFECT_DRIVE_GAS_URL = "https://script.google.com/macros/s/AKfycbypKdpp5DOD00VZV29Q5F_g_1VmlypQzZGjHBcqM5rju5FHBAPY36m--ssfYquDn4jmQ/exec";
-    const DEFECT_PHOTO_MAX_BYTES = 1024 * 1024; // 1MB
+    const DEFECT_PHOTO_MAX_BYTES = 1024 * 1024; // Drive 저장 절대 최대 1MB
+    // Base64 전송 시 데이터가 약 4/3로 커지므로, 실제 전송용 사진은 700KB 이하로 맞춥니다.
+    const DEFECT_PHOTO_UPLOAD_TARGET_BYTES = 700 * 1024;
 
     function dataUrlByteLength(dataUrl) {
         const comma = dataUrl.indexOf(',');
@@ -618,7 +620,7 @@
             ctx.drawImage(img, 0, 0, width, height);
             dataUrl = canvas.toDataURL('image/jpeg', quality);
             const bytes = dataUrlByteLength(dataUrl);
-            if (bytes > 0 && bytes <= DEFECT_PHOTO_MAX_BYTES) {
+            if (bytes > 0 && bytes <= DEFECT_PHOTO_UPLOAD_TARGET_BYTES) {
                 return { dataUrl, bytes, width, height, quality };
             }
             if (quality > 0.45) {
@@ -631,14 +633,14 @@
         }
 
         const finalBytes = dataUrlByteLength(dataUrl);
-        if (finalBytes > DEFECT_PHOTO_MAX_BYTES) {
-            throw new Error('사진을 1MB 이하로 압축하지 못했습니다. 더 작은 사진으로 다시 시도해주세요.');
+        if (finalBytes > DEFECT_PHOTO_UPLOAD_TARGET_BYTES) {
+            throw new Error('사진을 전송 가능한 크기(700KB 이하)로 압축하지 못했습니다. 더 작은 사진으로 다시 시도해주세요.');
         }
         return { dataUrl, bytes: finalBytes, width, height, quality };
     }
 
     async function normalizePhotoTo1MB(dataUrl) {
-        if (dataUrlByteLength(dataUrl) <= DEFECT_PHOTO_MAX_BYTES) return dataUrl;
+        if (dataUrlByteLength(dataUrl) <= DEFECT_PHOTO_UPLOAD_TARGET_BYTES) return dataUrl;
         const blob = await (await fetch(dataUrl)).blob();
         const tempFile = new File([blob], 'photo.jpg', {type:'image/jpeg'});
         const compressed = await compressPhotoTo1MB(tempFile);
@@ -1142,7 +1144,7 @@
     async function uploadMarkerPhotos(e, type) {
         const files = e.target.files;
         if (files && files.length > 0) {
-            showLoading('사진을 1MB 이하로 압축하고 Google Drive에 저장 중입니다...');
+            showLoading('사진을 전송용으로 압축(700KB 이하)하고 Google Drive에 저장 중입니다...');
             try {
                 const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId);
                 if (!marker) return;
@@ -1159,7 +1161,8 @@
                     let watermarkedBase64 = await addWatermarkToPhoto(compressed.dataUrl, getCurrentUser());
                     watermarkedBase64 = await normalizePhotoTo1MB(watermarkedBase64);
                     const finalBytes = dataUrlByteLength(watermarkedBase64);
-                    if (finalBytes > DEFECT_PHOTO_MAX_BYTES) throw new Error('사진을 1MB 이하로 압축하지 못했습니다.');
+                    if (finalBytes > DEFECT_PHOTO_MAX_BYTES) throw new Error('사진이 1MB를 초과했습니다.');
+                    console.log('Drive 전송 사진 크기:', Math.round(finalBytes / 1024) + 'KB');
 
                     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
                     const safeType = type === 'after' ? 'after' : 'before';
