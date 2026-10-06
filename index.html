@@ -430,14 +430,14 @@
 
 
     // ==========================================================
-    // ☁️ Google Drive 사진 시스템 v3 - 단일 POST 방식
+    // ☁️ Google Drive 사진 시스템 v4 속도/표시 개선 - 단일 POST 방식
     // 최종 JPG를 400KB 이하로 압축한 뒤 1회 POST로 전송합니다.
     // 조각 파일을 만들지 않아 느림/순서 뒤섞임/깨진 파일 문제를 피합니다.
     // Apps Script는 Drive 저장 결과를 CacheService에 기록하고,
     // 브라우저는 JSONP(GET)로 결과만 확인합니다.
     // ==========================================================
     const DEFECT_DRIVE_GAS_URL = "https://script.google.com/macros/s/AKfycbypKdpp5DOD00VZV29Q5F_g_1VmlypQzZGjJHBcqM5rju5FHBAPY36m--ssfYquDn4jmQ/exec";
-    const DEFECT_UPLOAD_TARGET_BYTES = 400 * 1024;
+    const DEFECT_UPLOAD_TARGET_BYTES = 260 * 1024;
     const DEFECT_UPLOAD_HARD_MAX_BYTES = 1024 * 1024;
 
     function makeDriveRequestId() {
@@ -484,6 +484,76 @@
         throw new Error('사진을 400KB 이하로 압축하지 못했습니다.');
     }
 
+    async function prepareDefectPhotoFast(file, authorName) {
+        const srcUrl = URL.createObjectURL(file);
+        try {
+            const img = await new Promise((resolve, reject) => {
+                const im = new Image();
+                im.onload = () => resolve(im);
+                im.onerror = () => reject(new Error('사진을 읽을 수 없습니다.'));
+                im.src = srcUrl;
+            });
+
+            let maxDim = 1280;
+            let width = img.naturalWidth || img.width;
+            let height = img.naturalHeight || img.height;
+            if (Math.max(width, height) > maxDim) {
+                const ratio = maxDim / Math.max(width, height);
+                width = Math.max(1, Math.round(width * ratio));
+                height = Math.max(1, Math.round(height * ratio));
+            }
+
+            let quality = 0.72;
+            let dataUrl = '';
+            for (let pass = 0; pass < 7; pass++) {
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d', {alpha:false});
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(0, 0, width, height);
+                ctx.drawImage(img, 0, 0, width, height);
+
+                const now = new Date().toLocaleString();
+                const watermarkText = `[ ${now} - ${authorName || '미상'} ]`;
+                const fontSize = Math.max(14, Math.round(width / 42));
+                ctx.font = `bold ${fontSize}px sans-serif`;
+                const padding = 7;
+                const textWidth = ctx.measureText(watermarkText).width;
+                const rectW = textWidth + padding * 2;
+                const rectH = fontSize + padding * 2;
+                const rectX = Math.max(0, width - rectW - 10);
+                const rectY = Math.max(0, height - rectH - 10);
+                ctx.fillStyle = 'rgba(0,0,0,0.65)';
+                ctx.fillRect(rectX, rectY, rectW, rectH);
+                ctx.fillStyle = '#f1c40f';
+                ctx.textBaseline = 'top';
+                ctx.fillText(watermarkText, rectX + padding, rectY + padding);
+
+                dataUrl = canvas.toDataURL('image/jpeg', quality);
+                const bytes = Math.floor((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
+                if (bytes <= DEFECT_UPLOAD_TARGET_BYTES) return {dataUrl, bytes};
+
+                if (quality > 0.48) quality -= 0.06;
+                else {
+                    width = Math.max(480, Math.round(width * 0.84));
+                    height = Math.max(480, Math.round(height * 0.84));
+                    quality = 0.68;
+                }
+            }
+            const finalBlob = await (await fetch(dataUrl)).blob();
+            if (finalBlob.size > DEFECT_UPLOAD_HARD_MAX_BYTES) throw new Error('사진을 충분히 압축하지 못했습니다.');
+            return {dataUrl, bytes:finalBlob.size};
+        } finally {
+            URL.revokeObjectURL(srcUrl);
+        }
+    }
+
+    function driveDisplayUrl_(fileId, fallbackUrl) {
+        if (fileId) return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(fileId) + '&sz=w1200';
+        return fallbackUrl || '';
+    }
+
     async function postDriveDirect_(fields) {
         const body = new URLSearchParams();
         Object.keys(fields).forEach(key => body.append(key, fields[key] == null ? '' : String(fields[key])));
@@ -496,7 +566,7 @@
         });
     }
 
-    function waitForDriveResult_(requestId, timeoutMs=30000) {
+    function waitForDriveResult_(requestId, timeoutMs=8000) {
         return new Promise((resolve, reject) => {
             const started = Date.now();
             let timer = null;
@@ -537,10 +607,10 @@
                         try { delete window[cb]; } catch(e) { window[cb] = undefined; }
                         s.remove();
                     }
-                }, 5000);
+                }, 2200);
             }
             poll();
-            timer = setInterval(poll, 700);
+            timer = setInterval(poll, 300);
         });
     }
 
@@ -563,7 +633,7 @@
             uploader:meta.uploader || getCurrentUser()
         });
         if (stageCb) stageCb('Drive 저장 확인');
-        return await waitForDriveResult_(requestId, 30000);
+        return await waitForDriveResult_(requestId, 8000);
     }
 
     function requestDriveDelete_(fileIds) {
@@ -1090,7 +1160,7 @@
                 marker.photoUrls.forEach((url, pIdx) => { 
                     html += `
                         <div class="photo-card">
-                            <img src="${url}" onclick="openImageMarkupModal(${marker.id}, 'before', ${pIdx})" title="마크업 그리기">
+                            <img src="${driveDisplayUrl_(marker.photoDriveIds[pIdx], url)}" onclick="openImageMarkupModal(${marker.id}, 'before', ${pIdx})" title="마크업 그리기" loading="lazy">
                             <button class="del-photo-btn" onclick="removeMarkerPhoto(event, 'before', ${pIdx})" title="삭제">✕</button>
                             <button class="dl-photo-btn" onclick="downloadMarkerPhoto(event, ${marker.id}, 'before', ${pIdx})" title="사진 다운로드">⬇️</button>
                         </div>`; 
@@ -1108,7 +1178,7 @@
                 marker.afterPhotoUrls.forEach((url, pIdx) => { 
                     html += `
                         <div class="photo-card">
-                            <img src="${url}" onclick="openImageMarkupModal(${marker.id}, 'after', ${pIdx})" title="마크업 그리기">
+                            <img src="${driveDisplayUrl_(marker.afterPhotoDriveIds[pIdx], url)}" onclick="openImageMarkupModal(${marker.id}, 'after', ${pIdx})" title="마크업 그리기" loading="lazy">
                             <button class="del-photo-btn" onclick="removeMarkerPhoto(event, 'after', ${pIdx})" title="삭제">✕</button>
                             <button class="dl-photo-btn" onclick="downloadMarkerPhoto(event, ${marker.id}, 'after', ${pIdx})" title="사진 다운로드">⬇️</button>
                         </div>`; 
@@ -1142,15 +1212,13 @@
                 const planName = plan ? plan.name : '미지정 도면';
 
                 for (let i = 0; i < files.length; i++) {
-                    showLoading(`사진 ${i + 1}/${files.length} 압축 중...`);
-                    let compressed = await compressImage(files[i], 1280, 1280, 0.80);
-                    const watermarked = await addWatermarkToPhoto(compressed, getCurrentUser());
-                    const finalData = await normalizePhotoUnderBytes(watermarked, DEFECT_UPLOAD_TARGET_BYTES);
-                    const finalBytes = (await (await fetch(finalData)).blob()).size;
-                    if (finalBytes > DEFECT_UPLOAD_HARD_MAX_BYTES) throw new Error('사진이 1MB를 초과했습니다.');
+                    showLoading(`사진 ${i + 1}/${files.length} 빠르게 압축 중...`);
+                    const prepared = await prepareDefectPhotoFast(files[i], getCurrentUser());
+                    if (prepared.bytes > DEFECT_UPLOAD_HARD_MAX_BYTES) throw new Error('사진이 1MB를 초과했습니다.');
+                    showLoading(`사진 ${i + 1}/${files.length} Drive 전송 중...`);
 
                     const fileName = `하자_${marker.id}_${type}_${Date.now()}_${i + 1}.jpg`;
-                    const result = await uploadDriveDirect_(finalData, {
+                    const result = await uploadDriveDirect_(prepared.dataUrl, {
                         fileName, groupName, planName, markerId:marker.id, photoType:type, uploader:getCurrentUser()
                     }, stage => showLoading(`사진 ${i + 1}/${files.length} ${stage}...`));
 
@@ -1160,7 +1228,7 @@
                     originalDriveIds.push(result.fileId);
                 }
                 renderRightPanel();
-                await syncMarkerToCloud(marker.id, currentPlanId);
+                syncMarkerToCloud(marker.id, currentPlanId).catch(() => {});
             } catch (err) {
                 alert('사진 업로드 실패: ' + (err.message || err));
             } finally {
@@ -1177,7 +1245,7 @@
         const urls = type === 'after' ? marker.afterPhotoUrls : marker.photoUrls;
         const ids = type === 'after' ? marker.afterPhotoDriveIds : marker.photoDriveIds;
         const src = urls[pIdx]; if (!src) return;
-        const href = ids[pIdx] ? 'https://drive.google.com/uc?export=download&id=' + encodeURIComponent(ids[pIdx]) : src;
+        const href = driveDisplayUrl_(ids[pIdx], src);
         const a = document.createElement('a'); a.href = href; a.download = `marker_${markerId}_${type}_${pIdx+1}.jpg`; a.target = '_blank';
         document.body.appendChild(a); a.click(); a.remove();
     }
@@ -1419,7 +1487,7 @@
 
     function openImageMarkupModal(markerId, type, pIdx) {
         const marker = markersByPlan[currentPlanId].find(m => m.id === markerId); if (!marker) return; currentEditMarkerId = markerId; currentEditPhotoType = type; currentEditPhotoIndex = pIdx; markupHistory = []; 
-        const currentUrl = type === 'after' ? marker.afterPhotoUrls[pIdx] : marker.photoUrls[pIdx]; currentOriginalImageUrl = type === 'after' ? marker.originalAfterPhotoUrls[pIdx] : marker.originalPhotoUrls[pIdx];
+        const currentId = type === 'after' ? marker.afterPhotoDriveIds[pIdx] : marker.photoDriveIds[pIdx]; const currentUrl = driveDisplayUrl_(currentId, type === 'after' ? marker.afterPhotoUrls[pIdx] : marker.photoUrls[pIdx]); currentOriginalImageUrl = currentUrl;
         document.getElementById('imageMarkupModal').style.display = 'flex';
         
         let img = new Image(); 
