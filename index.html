@@ -437,7 +437,7 @@
     // 브라우저는 JSONP(GET)로 결과만 확인합니다.
     // ==========================================================
     const DEFECT_DRIVE_GAS_URL = "https://script.google.com/macros/s/AKfycbypKdpp5DOD00VZV29Q5F_g_1VmlypQzZGjJHBcqM5rju5FHBAPY36m--ssfYquDn4jmQ/exec";
-    const DEFECT_UPLOAD_TARGET_BYTES = 180 * 1024;
+    const DEFECT_UPLOAD_TARGET_BYTES = 260 * 1024;
     const DEFECT_UPLOAD_HARD_MAX_BYTES = 1024 * 1024;
 
     function makeDriveRequestId() {
@@ -699,11 +699,54 @@
 
     const sidebarListEl = document.getElementById('sidebarList'); const planImage = document.getElementById('planImage'); const zoomArea = document.getElementById('zoomArea'); const mapViewport = document.getElementById('mapViewport'); const rightContent = document.getElementById('rightContent'); const rightPanelTitle = document.getElementById('rightPanelTitle'); const searchBoxContainer = document.getElementById('searchBoxContainer'); const searchInput = document.getElementById('searchInput');
 
+    function isPhotoDataUrl_(value) {
+        return typeof value === 'string' && value.indexOf('data:image/') === 0;
+    }
+
+    function compactPhotoArrayForCloud_(urls, ids) {
+        const arr = Array.isArray(urls) ? urls : [];
+        const idArr = Array.isArray(ids) ? ids : [];
+        return arr.map((item, i) => {
+            const id = String(idArr[i] || '').trim();
+            if (id) return { fileId: id };
+            if (item && typeof item === 'object' && item.fileId) return { fileId: String(item.fileId) };
+            if (typeof item === 'string' && !isPhotoDataUrl_(item)) return item;
+            // 아직 Drive ID가 없는 신규 로컬 사진은 Firestore/백업에 넣지 않습니다.
+            // 화면에서는 local dataURL로 계속 보이고, Drive 저장 완료 후 ID가 채워집니다.
+            return null;
+        }).filter(Boolean);
+    }
+
+    function compactMarkerForCloud_(marker) {
+        if (!marker) return null;
+        return {
+            ...marker,
+            photoUrls: compactPhotoArrayForCloud_(marker.photoUrls, marker.photoDriveIds),
+            originalPhotoUrls: compactPhotoArrayForCloud_(marker.originalPhotoUrls, marker.originalPhotoDriveIds),
+            afterPhotoUrls: compactPhotoArrayForCloud_(marker.afterPhotoUrls, marker.afterPhotoDriveIds),
+            originalAfterPhotoUrls: compactPhotoArrayForCloud_(marker.originalAfterPhotoUrls, marker.originalAfterPhotoDriveIds)
+        };
+    }
+
+    function compactMarkersByPlanForCloud_() {
+        const result = {};
+        Object.keys(markersByPlan || {}).forEach(pId => {
+            result[pId] = (markersByPlan[pId] || []).map(compactMarkerForCloud_).filter(Boolean);
+        });
+        return result;
+    }
+
     let backupTimer = null;
     function autoCloudBackup() {
         if(backupTimer) clearTimeout(backupTimer);
         backupTimer = setTimeout(() => {
-            const backupData = { exportDate: new Date().toISOString(), groups: groups, markersByPlan: markersByPlan, userList: userList, defectTypes: defectTypes };
+            const backupData = {
+                exportDate: new Date().toISOString(),
+                groups: groups,
+                markersByPlan: compactMarkersByPlanForCloud_(),
+                userList: userList,
+                defectTypes: defectTypes
+            };
             const gasUrl = "https://script.google.com/macros/s/AKfycbypKdpp5DOD00VZV29Q5F_g_1VmlypQzZGjJHBcqM5rju5FHBAPY36m--ssfYquDn4jmQ/exec"; 
             fetch(gasUrl, {
                 method: 'POST',
@@ -732,7 +775,17 @@
     async function syncMarkerToCloud(markerId, pId) {
         autoCloudBackup();
         localforage.setItem('defect_markers', markersByPlan);
-        try { const marker = markersByPlan[pId]?.find(m => m.id === markerId); if (marker) { await db.collection('DefectMarkers').doc(markerId.toString()).set({ ...marker, planId: pId }); } } catch(e) { alert("저장 실패! 사진 용량이 너무 크거나 1MB를 초과했습니다."); }
+        try {
+            const marker = markersByPlan[pId]?.find(m => m.id === markerId);
+            if (marker) {
+                const cloudMarker = compactMarkerForCloud_(marker);
+                cloudMarker.planId = pId;
+                await db.collection('DefectMarkers').doc(markerId.toString()).set(cloudMarker);
+            }
+        } catch(e) {
+            console.error('하자 저장 실패:', e);
+            alert("하자 저장에 실패했습니다. 사진은 Drive에 저장되어 있더라도 다음 저장 시 다시 반영할 수 있습니다.");
+        }
     }
 
     async function deleteMarkerFromCloud(markerId) { try { await db.collection('DefectMarkers').doc(markerId.toString()).delete(); autoCloudBackup(); } catch(e) {} }
@@ -1144,8 +1197,8 @@
             let typeOptions = ''; defectTypes.forEach(t => { typeOptions += `<option value="${t}" ${marker.type === t ? 'selected' : ''}>${t}</option>`; });
             let historyHtml = ''; if (marker.history.length === 0) { historyHtml = `<div style="text-align:center; color:#aaa; font-size:12px; padding:10px;">등록된 조치 이력이 없습니다.</div>`; } else { marker.history.forEach(h => { historyHtml += `<div class="history-item"><div class="history-meta"><b>${h.author}</b><span>${h.date}</span></div><div class="history-text">${h.text.split(String.fromCharCode(10)).join('<br>')}</div></div>`; }); }
 
-            const sizeBytes = new Blob([JSON.stringify(marker)]).size;
-            const maxBytes = 1048576; 
+            const sizeBytes = new Blob([JSON.stringify(compactMarkerForCloud_(marker))]).size;
+            const maxBytes = 900 * 1024; 
             const sizeKB = Math.round(sizeBytes / 1024);
             const percent = Math.min(100, (sizeBytes / maxBytes) * 100).toFixed(1);
             let barColor = '#27ae60'; if(percent > 70) barColor = '#f39c12'; if(percent > 90) barColor = '#e74c3c';
@@ -1153,13 +1206,13 @@
             const capacityHtml = `
                 <div style="background:#f8f9fa; padding:10px; border-radius:6px; margin-bottom:15px; border:1px solid #dfe4ea;">
                     <div style="display:flex; justify-content:space-between; font-size:11px; font-weight:bold; margin-bottom:5px; color:#555;">
-                        <span>💾 마커 저장 용량 (1MB 제한)</span>
+                        <span>💾 마커 저장 용량 (사진은 Drive 저장)</span>
                         <span style="color:${barColor}">${sizeKB}KB / 1024KB (${percent}%)</span>
                     </div>
                     <div style="height:8px; background:#eee; border-radius:4px; overflow:hidden;">
                         <div style="height:100%; width:${percent}%; background:${barColor}; transition:0.3s;"></div>
                     </div>
-                    ${percent > 90 ? `<div style="color:#e74c3c; font-size:10px; margin-top:4px; font-weight:bold;">⚠️ 용량이 거의 꽉 찼습니다! (사진 추가 시 저장 실패 위험)</div>` : ''}
+                    ${percent > 90 ? `<div style="color:#e67e22; font-size:10px; margin-top:4px; font-weight:bold;">⚠️ 텍스트 데이터가 많습니다. 사진은 Drive에 별도 저장됩니다.</div>` : ''}
                 </div>
             `;
 
@@ -1217,6 +1270,71 @@
 
     function addMarkerHistory() { const input = document.getElementById('newHistoryInput'); const text = input.value.trim(); if(!text) return; const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId); if(marker) { marker.history.push({ date: new Date().toLocaleString(), author: getCurrentUser(), text: text }); syncMarkerToCloud(marker.id, currentPlanId); renderRightPanel(); } }
 
+    // ==========================================
+    // 📸 사진 업로드: 화면은 즉시 표시 / Drive 저장은 백그라운드
+    // ==========================================
+    let backgroundDriveUploadCount = 0;
+    let backgroundDriveUploadTimer = null;
+
+    function ensureDriveBgStatus() {
+        let el = document.getElementById('driveBgStatus');
+        if (el) return el;
+        el = document.createElement('div');
+        el.id = 'driveBgStatus';
+        el.style.cssText = 'position:fixed;right:12px;bottom:12px;z-index:99999;background:rgba(44,62,80,.95);color:#fff;padding:9px 12px;border-radius:10px;font-size:12px;box-shadow:0 3px 12px rgba(0,0,0,.2);display:none;';
+        document.body.appendChild(el);
+        return el;
+    }
+
+    function updateDriveBgStatus(text) {
+        const el = ensureDriveBgStatus();
+        if (!backgroundDriveUploadCount) { el.style.display = 'none'; return; }
+        el.textContent = text || `📤 Drive 저장 중 ${backgroundDriveUploadCount}건`;
+        el.style.display = 'block';
+    }
+
+    function startBackgroundDriveUpload(marker, currentPlanIdForUpload, type, prepared, localIndex, meta) {
+        backgroundDriveUploadCount++;
+        updateDriveBgStatus(`📤 Drive 저장 중 ${backgroundDriveUploadCount}건`);
+
+        (async () => {
+            try {
+                const result = await uploadDriveDirect_(prepared.dataUrl, meta);
+                const latestMarker = markersByPlan[currentPlanIdForUpload]?.find(m => m.id === marker.id);
+                if (!latestMarker) return;
+                migrateMarkerData(latestMarker);
+                const arr = type === 'after' ? latestMarker.afterPhotoUrls : latestMarker.photoUrls;
+                const ids = type === 'after' ? latestMarker.afterPhotoDriveIds : latestMarker.photoDriveIds;
+                const origArr = type === 'after' ? latestMarker.originalAfterPhotoUrls : latestMarker.originalPhotoUrls;
+                const origIds = type === 'after' ? latestMarker.originalAfterPhotoDriveIds : latestMarker.originalPhotoDriveIds;
+
+                // 이미 다른 사진이 앞에 추가된 경우에도 해당 슬롯만 갱신
+                if (arr[localIndex] !== undefined) arr[localIndex] = result.thumbnailUrl || result.url;
+                if (origArr[localIndex] !== undefined) origArr[localIndex] = result.thumbnailUrl || result.url;
+                ids[localIndex] = result.fileId || '';
+                origIds[localIndex] = result.fileId || '';
+
+                renderRightPanel();
+                // Drive ID가 확보된 후에만 Firestore에 저장
+                await syncMarkerToCloud(latestMarker.id, currentPlanIdForUpload);
+            } catch (err) {
+                console.error('백그라운드 Drive 사진 저장 실패:', err);
+                // 실패해도 화면의 로컬 사진은 유지
+            } finally {
+                backgroundDriveUploadCount = Math.max(0, backgroundDriveUploadCount - 1);
+                updateDriveBgStatus(`📤 Drive 저장 중 ${backgroundDriveUploadCount}건`);
+                if (!backgroundDriveUploadCount) {
+                    const el = ensureDriveBgStatus();
+                    el.textContent = '✅ Drive 사진 저장 완료';
+                    el.style.display = 'block';
+                    setTimeout(() => {
+                        if (!backgroundDriveUploadCount) el.style.display = 'none';
+                    }, 1800);
+                }
+            }
+        })();
+    }
+
     async function uploadMarkerPhotos(e, type) {
         const files = e.target.files;
         if (!files || !files.length) { e.target.value = ''; return; }
@@ -1235,13 +1353,14 @@
             const plan = group ? group.plans.find(p => p.id === currentPlanId) : null;
             const groupName = group ? group.name : '미지정 현장';
             const planName = plan ? plan.name : '미지정 도면';
+            const planIdAtUpload = currentPlanId;
 
-            const jobs = [];
+            // 화면은 사진 처리 직후 바로 표시하고 오버레이를 닫습니다.
+            hideLoading();
+
             for (let i = 0; i < files.length; i++) {
-                showLoading(`사진 ${i + 1}/${files.length} 처리 중...`);
                 const prepared = await prepareDefectPhotoFast(files[i], getCurrentUser());
 
-                // 화면에는 먼저 로컬 사진을 즉시 표시합니다.
                 const localIndex = targetArray.length;
                 targetArray.push(prepared.dataUrl);
                 originalArray.push(prepared.dataUrl);
@@ -1255,29 +1374,22 @@
                 const stamp = Date.now();
                 const fileName = `하자_${markerNo}번_${safeType}_${safeDesc}_${type === 'after' ? '조치후' : '조치전'}_${String(i+1).padStart(2,'0')}_${stamp}.jpg`;
 
-                jobs.push((async () => {
-                    const result = await uploadDriveDirect_(prepared.dataUrl, {
-                        fileName, groupName, planName, markerId:marker.id, photoType:type, uploader:getCurrentUser()
-                    }, stage => showLoading(`사진 ${i + 1}/${files.length} ${stage}...`));
-
-                    targetArray[localIndex] = result.thumbnailUrl || result.url;
-                    originalArray[localIndex] = result.thumbnailUrl || result.url;
-                    driveIds[localIndex] = result.fileId;
-                    originalDriveIds[localIndex] = result.fileId;
-                    renderRightPanel();
-                    return result;
-                })());
+                // ⚡ 여기서 기다리지 않습니다. Drive 저장은 백그라운드에서 계속 진행됩니다.
+                startBackgroundDriveUpload(marker, planIdAtUpload, type, prepared, localIndex, {
+                    fileName,
+                    groupName,
+                    planName,
+                    markerId: marker.id,
+                    photoType: type,
+                    uploader: getCurrentUser()
+                });
             }
 
-            // 여러 장이면 동시에 Drive로 보냅니다.
-            await Promise.all(jobs);
-
-            // Drive ID가 저장된 뒤에만 Firestore에 기록합니다.
-            await syncMarkerToCloud(marker.id, currentPlanId);
+            // 사진은 즉시 로컬에 보이고, Firestore/Drive 저장은 백그라운드에서 완료됩니다.
         } catch (err) {
-            alert('사진 업로드 실패: ' + (err.message || err));
-        } finally {
+            alert('사진 처리 실패: ' + (err.message || err));
             hideLoading();
+        } finally {
             e.target.value = '';
         }
     }
