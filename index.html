@@ -244,6 +244,7 @@
                 <button class="btn-manage" onclick="openTypeModal()">🏷️ 유형</button>
             </div>
             <button class="action-btn btn-global" onclick="openGlobalListModal()">🌍 전체 목록</button>
+            <button class="action-btn" style="background:#bf2600;color:#fff;" onclick="openPendingDefectsModal()">🚨 미조치</button>
             <button class="action-btn btn-dash" onclick="openDashboardModal()">📊 통계</button>
             <button class="action-btn btn-excel" onclick="openExportOptionModal('excel')">📊 엑셀</button>
             <button class="action-btn btn-pdf" onclick="openExportOptionModal('pdf')">📄 PDF</button>
@@ -400,9 +401,15 @@
                 <h4 style="margin:0 0 6px;">📤 로컬 백업 다운로드</h4>
                 <button class="action-btn btn-excel" style="width:100%; justify-content:center;" onclick="exportJSONData()">백업 파일 (.json) 저장</button>
             </div>
-            <div style="background:#f8f9fa; padding:12px; border-radius:8px;">
+            <div style="background:#f8f9fa; padding:12px; border-radius:8px; margin-bottom:10px;">
                 <h4 style="margin:0 0 6px;">📥 백업 파일로 복구</h4>
                 <button class="action-btn btn-backup" style="width:100%; justify-content:center;" onclick="document.getElementById('modalJsonImportInput').click()">선택한 백업 파일로 복구</button>
+            </div>
+            <div style="background:#fff8e8; padding:12px; border-radius:8px; border:1px solid #f1c40f;">
+                <h4 style="margin:0 0 6px;">☁️ 기존 데이터 Drive 정리</h4>
+                <button class="action-btn" style="width:100%; justify-content:center; background:#f39c12; color:#fff; margin-bottom:6px;" onclick="migrateAllPhotosToDrive()">기존 사진 Drive 이관</button>
+                <button class="action-btn" style="width:100%; justify-content:center; background:#8e44ad; color:#fff;" onclick="migrateAllPlansToDrive()">기존 도면 Drive 이관</button>
+                <div style="font-size:10px;color:#777;margin-top:6px;line-height:1.4;">이미 Drive에 저장된 자료는 건드리지 않고, 아직 Base64로 남아 있는 자료만 이관합니다.</div>
             </div>
         </div>
     </div>
@@ -436,6 +443,56 @@
     // Apps Script는 Drive 저장 결과를 CacheService에 기록하고,
     // 브라우저는 JSONP(GET)로 결과만 확인합니다.
     // ==========================================================
+
+    // ==========================================================
+    // 🔢 마커 고정 번호 시스템
+    // ==========================================================
+    function getMarkerNo_(marker, pId) {
+        if (!marker) return 0;
+        const n = parseInt(marker.markerNo, 10);
+        if (isFinite(n) && n > 0) return n;
+        const arr = markersByPlan[pId] || [];
+        const idx = arr.findIndex(x => x && x.id === marker.id);
+        return idx >= 0 ? idx + 1 : 0;
+    }
+
+    function getNextMarkerNo_(pId) {
+        const arr = markersByPlan[pId] || [];
+        let maxNo = 0;
+        arr.forEach(m => {
+            const n = parseInt(m && m.markerNo, 10);
+            if (isFinite(n) && n > maxNo) maxNo = n;
+        });
+        if (!maxNo) maxNo = arr.length;
+        return maxNo + 1;
+    }
+
+    function ensureAllMarkerNumbers_() {
+        Object.keys(markersByPlan || {}).forEach(pId => {
+            const arr = markersByPlan[pId] || [];
+            const sorted = arr.slice().sort((a,b) => {
+                const ad = new Date(a.createdAt || 0).getTime() || 0;
+                const bd = new Date(b.createdAt || 0).getTime() || 0;
+                return ad - bd || String(a.id).localeCompare(String(b.id));
+            });
+            let maxNo = 0;
+            sorted.forEach(m => { const n=parseInt(m.markerNo,10); if(isFinite(n)&&n>maxNo) maxNo=n; });
+            sorted.forEach(m => {
+                if (!isFinite(parseInt(m.markerNo,10)) || parseInt(m.markerNo,10) <= 0) {
+                    m.markerNo = ++maxNo;
+                    syncMarkerToCloud(m.id, pId);
+                }
+            });
+        });
+    }
+
+    function markerFileStem_(marker, pId) {
+        const no = String(getMarkerNo_(marker, pId || currentPlanId) || marker.id);
+        const safeDesc = String(marker.desc || '내용없음').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').substring(0, 30);
+        const safeType = String(marker.type || '미지정').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').substring(0, 20);
+        return `하자_${String(no).padStart(2,'0')}번_${safeType}_${safeDesc}`;
+    }
+
     const DEFECT_DRIVE_GAS_URL = "https://script.google.com/macros/s/AKfycbypKdpp5DOD00VZV29Q5F_g_1VmlypQzZGjJHBcqM5rju5FHBAPY36m--ssfYquDn4jmQ/exec";
     const DEFECT_UPLOAD_TARGET_BYTES = 260 * 1024;
     const DEFECT_UPLOAD_HARD_MAX_BYTES = 1024 * 1024;
@@ -590,7 +647,7 @@
         });
     }
 
-    function waitForDriveResult_(requestId, timeoutMs=8000) {
+    function waitForDriveResult_(requestId, info={}, timeoutMs=8000) {
         return new Promise((resolve, reject) => {
             const started = Date.now();
             let timer = null;
@@ -603,11 +660,8 @@
             }
             function poll() {
                 if (done) return;
-                if (Date.now() - started > timeoutMs) {
-                    finish(new Error('Google Drive 저장 확인시간이 초과되었습니다.'));
-                    return;
-                }
-                const cb = '__driveResult3_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
+                if (Date.now() - started > timeoutMs) { finish(new Error('Google Drive 저장 확인시간이 초과되었습니다.')); return; }
+                const cb = '__driveResult4_' + Date.now() + '_' + Math.random().toString(36).slice(2,8);
                 const s = document.createElement('script');
                 let called = false;
                 window[cb] = function(result) {
@@ -620,18 +674,12 @@
                         s.remove();
                     }
                 };
-                s.onerror = function() {
-                    try { delete window[cb]; } catch(e) { window[cb] = undefined; }
-                    s.remove();
-                };
-                s.src = DEFECT_DRIVE_GAS_URL + '?action=photo_status&requestId=' + encodeURIComponent(requestId) + '&callback=' + encodeURIComponent(cb) + '&t=' + Date.now();
+                s.onerror = function(){ try{delete window[cb];}catch(e){window[cb]=undefined;} s.remove(); };
+                const action = info.kind === 'plan' ? 'plan_status' : 'photo_status';
+                const extra = '&fileName=' + encodeURIComponent(info.fileName || '') + '&groupName=' + encodeURIComponent(info.groupName || '미지정 현장') + '&planName=' + encodeURIComponent(info.planName || '미지정 도면');
+                s.src = DEFECT_DRIVE_GAS_URL + '?action=' + action + '&requestId=' + encodeURIComponent(requestId) + extra + '&callback=' + encodeURIComponent(cb) + '&t=' + Date.now();
                 document.head.appendChild(s);
-                setTimeout(() => {
-                    if (!called) {
-                        try { delete window[cb]; } catch(e) { window[cb] = undefined; }
-                        s.remove();
-                    }
-                }, 1400);
+                setTimeout(() => { if(!called){ try{delete window[cb];}catch(e){window[cb]=undefined;} s.remove(); } }, 1300);
             }
             poll();
             timer = setInterval(poll, 350);
@@ -657,7 +705,7 @@
             uploader:meta.uploader || getCurrentUser()
         });
         if (stageCb) stageCb('Drive 저장 확인');
-        return await waitForDriveResult_(requestId, 6000);
+        return await waitForDriveResult_(requestId, {kind:'photo', fileName:meta.fileName, groupName:meta.groupName || '미지정 현장', planName:meta.planName || '미지정 도면'}, 7000);
     }
 
     function requestDriveDelete_(fileIds) {
@@ -737,23 +785,15 @@
     }
 
     let backupTimer = null;
+    function compactGroupsForCloud_(){
+        return groups.map(g=>({id:g.id,name:g.name,isCollapsed:g.isCollapsed,plans:(g.plans||[]).map(p=>({id:p.id,name:p.name,scaleInfo:p.scaleInfo||'',driveId:p.driveId||''}))}));
+    }
     function autoCloudBackup() {
         if(backupTimer) clearTimeout(backupTimer);
-        backupTimer = setTimeout(() => {
-            const backupData = {
-                exportDate: new Date().toISOString(),
-                groups: groups,
-                markersByPlan: compactMarkersByPlanForCloud_(),
-                userList: userList,
-                defectTypes: defectTypes
-            };
-            const gasUrl = "https://script.google.com/macros/s/AKfycbypKdpp5DOD00VZV29Q5F_g_1VmlypQzZGjJHBcqM5rju5FHBAPY36m--ssfYquDn4jmQ/exec"; 
-            fetch(gasUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'text/plain' },
-                body: JSON.stringify(backupData)
-            }).then(res => console.log('스텔스 자동 백업 완료')).catch(e => console.log('자동 백업 에러'));
-        }, 3000);
+        backupTimer=setTimeout(()=>{
+            const backupData={exportDate:new Date().toISOString(),groups:compactGroupsForCloud_(),markersByPlan:compactMarkersByPlanForCloud_(),userList,defectTypes};
+            fetch(DEFECT_DRIVE_GAS_URL,{method:'POST',headers:{'Content-Type':'text/plain'},body:JSON.stringify(backupData)}).catch(()=>{});
+        },60000);
     }
 
     async function syncMetaToCloud() {
@@ -762,14 +802,18 @@
         localStorage.setItem('defect_users', JSON.stringify(userList)); 
         localStorage.setItem('defect_types', JSON.stringify(defectTypes));
         try {
-            const groupsLight = groups.map(g => ({ id: g.id, name: g.name, isCollapsed: g.isCollapsed, plans: g.plans.map(p => ({ id: p.id, name: p.name, scaleInfo: p.scaleInfo || '' })) }));
+            const groupsLight = groups.map(g => ({ id: g.id, name: g.name, isCollapsed: g.isCollapsed, plans: g.plans.map(p => ({ id: p.id, name: p.name, scaleInfo: p.scaleInfo || '', driveId: p.driveId || '' })) }));
             await db.collection('SystemCore').doc('MetaData').set({ userList, defectTypes, groups: groupsLight });
         } catch(e) { console.error("메타 동기화 실패:", e); }
     }
 
     async function syncPlanToCloud(planId) {
         autoCloudBackup();
-        try { let foundPlan = null; groups.forEach(g => { let p = g.plans.find(x => x.id === planId); if(p) foundPlan = p; }); if (foundPlan && foundPlan.url) { await db.collection('FloorPlans').doc(planId).set({ id: planId, url: foundPlan.url }); } } catch(e) {}
+        try {
+            let foundPlan=null;
+            groups.forEach(g=>{ const p=g.plans.find(x=>x.id===planId); if(p) foundPlan=p; });
+            if(foundPlan) await db.collection('FloorPlans').doc(planId).set({id:planId,url:foundPlan.url||'',driveId:foundPlan.driveId||''});
+        } catch(e){ console.error('도면 동기화 실패:',e); }
     }
 
     async function syncMarkerToCloud(markerId, pId) {
@@ -801,7 +845,7 @@
                 const cloudGroups = data.groups || [];
                 cloudGroups.forEach(cg => {
                     const localG = groups.find(g => g.id === cg.id);
-                    if(localG) { cg.plans.forEach(cp => { const localP = localG.plans.find(p => p.id === cp.id); if(localP && localP.url) cp.url = localP.url; }); }
+                    if(localG) { cg.plans.forEach(cp => { const localP = localG.plans.find(p => p.id === cp.id); if(localP && localP.url) { cp.url = localP.url; cp.driveId = localP.driveId || cp.driveId || ''; } }); }
                 });
                 groups = cloudGroups; renderSidebar(); 
                 if(document.getElementById('userModal').style.display === 'flex') openUserModal();
@@ -810,7 +854,7 @@
         });
 
         db.collection('FloorPlans').onSnapshot(snap => {
-            snap.docChanges().forEach(change => { const pData = change.doc.data(); groups.forEach(g => { let p = g.plans.find(x => x.id === pData.id); if(p) p.url = pData.url; }); if (currentPlanId === pData.id) planImage.src = pData.url; });
+            snap.docChanges().forEach(change => { const pData = change.doc.data(); groups.forEach(g => { let p = g.plans.find(x => x.id === pData.id); if(p) p.url = pData.url; }); if (currentPlanId === pData.id) planImage.src = driveDisplayUrl_(pData.driveId, pData.url); });
             localforage.setItem('defect_groups', groups); 
         });
 
@@ -981,48 +1025,83 @@
     function moveGroup(gId, dir) { const idx = groups.findIndex(g => g.id === gId); const target = idx + dir; if (target < 0 || target >= groups.length) return; const t = groups[idx]; groups[idx] = groups[target]; groups[target] = t; renderSidebar(); syncMetaToCloud(); }
     function addGroup() { const name = prompt('새 그룹 이름:'); if (name && name.trim()) { groups.push({ id: 'g_' + Date.now(), name: name.trim(), isCollapsed: false, plans: [] }); renderSidebar(); syncMetaToCloud(); } }
     function editGroup(gId) { const g = groups.find(g => g.id === gId); const name = prompt('그룹 이름 수정:', g.name); if (name && name.trim()) { g.name = name.trim(); renderSidebar(); syncMetaToCloud(); } }
-    function deleteGroup(gId) { if (!confirm('삭제하시겠습니까?')) return; const g = groups.find(g => g.id === gId); g.plans.forEach(p => { (markersByPlan[p.id] || []).forEach(m => deleteMarkerFromCloud(m.id)); delete markersByPlan[p.id]; deletePlanFromCloud(p.id); }); groups = groups.filter(g => g.id !== gId); if (g.plans.some(p => p.id === currentPlanId)) clearViewer(); renderSidebar(); syncMetaToCloud(); }
+    function deleteGroup(gId) {
+        if (!confirm('그룹과 안의 도면/하자/Drive 사진을 모두 삭제하시겠습니까?')) return;
+        const g = groups.find(g => g.id === gId);
+        if (!g) return;
+        const ids=[];
+        g.plans.forEach(p => {
+            if (p.driveId) ids.push(p.driveId);
+            (markersByPlan[p.id] || []).forEach(m => { migrateMarkerData(m); ids.push(...(m.photoDriveIds||[]), ...(m.originalPhotoDriveIds||[]), ...(m.afterPhotoDriveIds||[]), ...(m.originalAfterPhotoDriveIds||[])); deleteMarkerFromCloud(m.id); });
+            delete markersByPlan[p.id];
+            deletePlanFromCloud(p.id);
+        });
+        if (ids.length) requestDriveDelete_(ids);
+        groups = groups.filter(g => g.id !== gId);
+        if (g.plans.some(p => p.id === currentPlanId)) clearViewer();
+        renderSidebar(); syncMetaToCloud();
+    }
     
     function triggerUpload(gId) { targetGroupIdForUpload = gId; globalPlanUpload.click(); }
     globalPlanUpload.addEventListener('change', async function(e) {
         const file = e.target.files[0];
         if (file && targetGroupIdForUpload) {
-            showLoading('도면을 클라우드에 업로드 중입니다...');
+            showLoading('도면을 Google Drive에 업로드 중입니다...');
             try {
-                const base64Url = await compressImage(file, 2000, 2000, 0.85); 
-                let defaultName = file.name.replace(/\.[^/.]+$/, ""); const newName = prompt('도면 이름을 입력하세요:', defaultName) || defaultName;
-                const newPlanId = 'plan_' + Date.now(); const g = groups.find(g => g.id === targetGroupIdForUpload);
-                g.plans.push({ id: newPlanId, name: newName, url: base64Url, scaleInfo: "" }); g.isCollapsed = false; markersByPlan[newPlanId] = []; 
-                changeFloorPlan(newPlanId); syncMetaToCloud(); syncPlanToCloud(newPlanId); 
-            } catch (err) { alert('업로드 실패: ' + err.message); }
+                const dataUrl = await preparePlanForDrive_(file,700*1024);
+                let defaultName = file.name.replace(/\.[^/.]+$/, "");
+                const newName = prompt('도면 이름을 입력하세요:', defaultName) || defaultName;
+                const newPlanId = 'plan_' + Date.now();
+                const g = groups.find(g => g.id === targetGroupIdForUpload);
+                const result = await uploadPlanDrive_(dataUrl,{fileName:`도면_${newPlanId}_${newName.replace(/[\/:*?"<>|]/g,'_').substring(0,50)}.jpg`,groupName:g?g.name:'미지정 현장',planName:newName});
+                g.plans.push({ id:newPlanId, name:newName, url:result.thumbnailUrl||result.url, driveId:result.fileId, scaleInfo:"" });
+                g.isCollapsed=false; markersByPlan[newPlanId]=[];
+                changeFloorPlan(newPlanId); await syncMetaToCloud(); await syncPlanToCloud(newPlanId);
+            } catch(err){ alert('도면 업로드 실패: '+err.message); }
             hideLoading();
         }
-        e.target.value = ''; 
+        e.target.value='';
     });
 
     const replacePlanUpload = document.getElementById('replacePlanUpload');
     function triggerReplacePlan(pId) { targetReplacePlanId = pId; replacePlanUpload.click(); }
     replacePlanUpload.addEventListener('change', async function(e) {
-        const file = e.target.files[0];
-        if (file && targetReplacePlanId) {
-            showLoading('새 도면을 클라우드에 교체 업로드 중입니다...');
-            try {
-                const base64Url = await compressImage(file, 2000, 2000, 0.85);
-                let foundPlan = null; for(let g of groups) { let p = g.plans.find(p => p.id === targetReplacePlanId); if(p) { foundPlan = p; break; } }
-                if(foundPlan) { foundPlan.url = base64Url; if(currentPlanId === targetReplacePlanId) planImage.src = base64Url; syncPlanToCloud(targetReplacePlanId); alert('도면이 클라우드에 성공적으로 교체되었습니다.'); }
-            } catch (err) { alert('교체 실패: ' + err.message); }
+        const file=e.target.files[0];
+        if(file && targetReplacePlanId){
+            showLoading('새 도면을 Google Drive에 교체 업로드 중입니다...');
+            try{
+                let foundPlan=null, parentGroup=null;
+                for(const g of groups){ const p=g.plans.find(p=>p.id===targetReplacePlanId); if(p){foundPlan=p; parentGroup=g; break;} }
+                if(!foundPlan) throw new Error('도면을 찾을 수 없습니다.');
+                const dataUrl=await preparePlanForDrive_(file,700*1024);
+                const oldId=foundPlan.driveId||'';
+                const result=await uploadPlanDrive_(dataUrl,{fileName:`도면_${foundPlan.id}_${String(foundPlan.name).replace(/[\/:*?"<>|]/g,'_').substring(0,50)}_교체_${Date.now()}.jpg`,groupName:parentGroup?parentGroup.name:'미지정 현장',planName:foundPlan.name});
+                foundPlan.url=result.thumbnailUrl||result.url; foundPlan.driveId=result.fileId;
+                if(oldId) requestDriveDelete_([oldId]);
+                if(currentPlanId===targetReplacePlanId) planImage.src=foundPlan.url;
+                await syncMetaToCloud(); await syncPlanToCloud(targetReplacePlanId); renderSidebar(); alert('도면이 Google Drive에 교체 저장되었습니다.');
+            }catch(err){ alert('도면 교체 실패: '+err.message); }
             hideLoading();
         }
-        e.target.value = '';
+        e.target.value='';
     });
     
     function editPlan(gId, pId) { const g = groups.find(g => g.id === gId); const p = g.plans.find(p => p.id === pId); const n = prompt('이름 수정:', p.name); if (n && n.trim()) { p.name = n.trim(); if(currentPlanId === pId) document.getElementById('currentPlanTitle').innerText = `[${g.name}] ${p.name}`; renderSidebar(); syncMetaToCloud(); } }
-    function deletePlan(gId, pId) { if (!confirm('삭제하시겠습니까?')) return; const g = groups.find(g => g.id === gId); g.plans = g.plans.filter(p => p.id !== pId); (markersByPlan[pId] || []).forEach(m => deleteMarkerFromCloud(m.id)); delete markersByPlan[pId]; deletePlanFromCloud(pId); if (currentPlanId === pId) clearViewer(); renderSidebar(); syncMetaToCloud(); }
+    function deletePlan(gId, pId) {
+        if (!confirm('도면과 해당 도면의 하자 사진을 모두 삭제하시겠습니까?')) return;
+        const g = groups.find(g => g.id === gId); if (!g) return;
+        const plan = g.plans.find(p => p.id === pId); const ids=[];
+        if (plan && plan.driveId) ids.push(plan.driveId);
+        (markersByPlan[pId] || []).forEach(m => { migrateMarkerData(m); ids.push(...(m.photoDriveIds||[]), ...(m.originalPhotoDriveIds||[]), ...(m.afterPhotoDriveIds||[]), ...(m.originalAfterPhotoDriveIds||[])); deleteMarkerFromCloud(m.id); });
+        if (ids.length) requestDriveDelete_(ids);
+        g.plans = g.plans.filter(p => p.id !== pId); delete markersByPlan[pId]; deletePlanFromCloud(pId);
+        if (currentPlanId === pId) clearViewer(); renderSidebar(); syncMetaToCloud();
+    }
     function clearViewer() { currentPlanId = null; planImage.src = ''; document.getElementById('currentPlanTitle').innerText = '도면을 선택해주세요.'; document.getElementById('scaleInputWrapper').style.display = 'none'; document.querySelectorAll('.pin-container').forEach(pin => pin.remove()); selectedMarkerId = null; renderRightPanel(); }
 
     function changeFloorPlan(planId) {
         currentPlanId = planId; let selectedPlan = null, parentGroupName = ''; groups.forEach(g => { const p = g.plans.find(p => p.id === planId); if (p) { selectedPlan = p; parentGroupName = g.name; } });
-        planImage.src = selectedPlan ? selectedPlan.url : ''; document.getElementById('currentPlanTitle').innerText = selectedPlan ? `[${parentGroupName}] ${selectedPlan.name}` : '도면을 선택해주세요.';
+        planImage.src = selectedPlan ? driveDisplayUrl_(selectedPlan.driveId, selectedPlan.url) : ''; document.getElementById('currentPlanTitle').innerText = selectedPlan ? `[${parentGroupName}] ${selectedPlan.name}` : '도면을 선택해주세요.';
         if (selectedPlan) { document.getElementById('scaleInputWrapper').style.display = 'flex'; document.getElementById('planScaleInput').value = selectedPlan.scaleInfo || ''; }
         currentScale = 100; zoomArea.style.width = '100%'; currentFrameWidth = 100; mapViewport.style.width = '100%'; mapViewport.style.margin = '0 auto';
         document.getElementById('frameScaleValue').innerText = '(100%)'; document.getElementById('zoomScaleValue').innerText = '(100%)';
@@ -1060,8 +1139,8 @@
             const isCompleted = marker.status === 'completed';
             const container = document.createElement('div'); container.className = 'pin-container' + (marker.id === selectedMarkerId ? ' selected' : ''); container.style.left = marker.x + '%'; container.style.top = marker.y + '%'; container.dataset.id = marker.id;
             const pinColor = isCompleted ? '#27ae60' : getTypeColor(marker.type || '미지정'); const typeChar = (marker.type && marker.type !== '미지정') ? marker.type.substring(0,1) : '!';
-            const pin = document.createElement('div'); pin.className = 'pin' + (isCompleted ? ' status-completed' : ''); pin.style.backgroundColor = pinColor; pin.style.borderColor = 'white'; pin.innerHTML = `<div class="pin-type-text">${typeChar}</div><div class="pin-num-text">${index + 1}</div>`;
-            const label = document.createElement('div'); label.className = 'pin-label'; const shortText = marker.desc ? marker.desc : '미입력'; label.innerText = (index + 1) + '. [' + (marker.type||'미지정') + '] ' + shortText;
+            const pin = document.createElement('div'); pin.className = 'pin' + (isCompleted ? ' status-completed' : ''); pin.style.backgroundColor = pinColor; pin.style.borderColor = 'white'; pin.innerHTML = `<div class="pin-type-text">${typeChar}</div><div class="pin-num-text">${getMarkerNo_(marker, currentPlanId)}</div>`;
+            const label = document.createElement('div'); label.className = 'pin-label'; const shortText = marker.desc ? marker.desc : '미입력'; label.innerText = getMarkerNo_(marker, currentPlanId) + '. [' + (marker.type||'미지정') + '] ' + shortText;
             container.appendChild(pin); container.appendChild(label); zoomArea.appendChild(container);
             const style = document.createElement('style'); style.innerHTML = `.pin-container[data-id="${marker.id}"] .pin::after { border-top-color: ${pinColor} !important; }`; container.appendChild(style);
         });
@@ -1131,10 +1210,10 @@
             if (!markersByPlan[currentPlanId]) { markersByPlan[currentPlanId] = []; }
             const currentMarkers = markersByPlan[currentPlanId];
 
-            if (confirm(`여기에 ${currentMarkers.length + 1}번 마커를 추가할까요?`)) {
+            if (confirm(`여기에 ${getNextMarkerNo_(currentPlanId)}번 마커를 추가할까요?`)) {
                 const newId = Date.now(); 
                 const newMarker = { 
-                    id: newId, x: clickX, y: clickY, type: defectTypes[0] || '미지정', status: 'pending', desc: '', 
+                    id: newId, markerNo: getNextMarkerNo_(currentPlanId), x: clickX, y: clickY, type: defectTypes[0] || '미지정', status: 'pending', desc: '', 
                     photoUrls: [], originalPhotoUrls: [], photoDriveIds: [], originalPhotoDriveIds: [], afterPhotoUrls: [], originalAfterPhotoUrls: [], afterPhotoDriveIds: [], originalAfterPhotoDriveIds: [], 
                     history: [], authorName: getCurrentUser(), createdAt: new Date().toLocaleString(), 
                     resolverName: '', resolvedAt: '' 
@@ -1156,7 +1235,22 @@
 
     function setMarkerStatus(status) {
         const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId);
-        if (marker) { marker.status = status; if (status === 'completed' && !marker.resolvedAt) { marker.resolverName = getCurrentUser(); marker.resolvedAt = new Date().toLocaleString(); } renderMarkers(); renderRightPanel(); syncMarkerToCloud(marker.id, currentPlanId); }
+        if (!marker) return;
+        const prev = marker.status || 'pending';
+        if (prev === status) return;
+        marker.status = status;
+        const now = new Date().toLocaleString();
+        if (!marker.history) marker.history = [];
+        if (status === 'completed') {
+            marker.resolverName = getCurrentUser();
+            marker.resolvedAt = now;
+            marker.history.push({date:now, author:getCurrentUser(), text:'상태 변경: 조치 완료'});
+        } else {
+            marker.resolverName = '';
+            marker.resolvedAt = '';
+            marker.history.push({date:now, author:getCurrentUser(), text:'상태 변경: 미조치로 되돌림'});
+        }
+        renderMarkers(); renderRightPanel(); syncMarkerToCloud(marker.id, currentPlanId);
     }
 
     function migrateMarkerData(marker) {
@@ -1169,6 +1263,7 @@
         if (!marker.afterPhotoDriveIds) marker.afterPhotoDriveIds = [];
         if (!marker.originalAfterPhotoDriveIds) marker.originalAfterPhotoDriveIds = [];
         if (!marker.status) marker.status = 'pending';
+        if (!(parseInt(marker.markerNo,10) > 0)) marker.markerNo = getMarkerNo_(marker, currentPlanId);
         if (!marker.type) marker.type = defectTypes[0] || '미지정';
         if (!marker.history) marker.history = [];
         // 이전 시도 버전에서 {url,fileId} 형태로 들어간 자료도 문자열 URL + ID 배열로 변환
@@ -1218,7 +1313,7 @@
 
             let html = `
                 <button class="back-btn" onclick="deselectMarker()">🔙 현재 도면 리스트로 돌아가기</button>
-                <div style="font-size: 15px; font-weight: bold; color: #2980b9; margin-bottom: 10px; border-bottom: 2px dashed #ecf0f1; padding-bottom: 10px; display:flex; justify-content:space-between; align-items:center;"><span>📍 [ ${markerIndex + 1}번 마커 상세 ]</span></div>
+                <div style="font-size: 15px; font-weight: bold; color: #2980b9; margin-bottom: 10px; border-bottom: 2px dashed #ecf0f1; padding-bottom: 10px; display:flex; justify-content:space-between; align-items:center;"><span>📍 [ ${getMarkerNo_(marker, currentPlanId)}번 마커 상세 ]</span></div>
                 
                 ${capacityHtml} 
 
@@ -1240,6 +1335,7 @@
                             <img src="${driveDisplayUrl_(marker.photoDriveIds[pIdx], url)}" onclick="openImageMarkupModal(${marker.id}, 'before', ${pIdx})" title="마크업 그리기" loading="lazy">
                             <button class="del-photo-btn" onclick="removeMarkerPhoto(event, 'before', ${pIdx})" title="삭제">✕</button>
                             <button class="dl-photo-btn" onclick="downloadMarkerPhoto(event, ${marker.id}, 'before', ${pIdx})" title="사진 다운로드">⬇️</button>
+                            ${photoStatusHtml_(marker, 'before', pIdx)}
                         </div>`; 
                 }); 
                 html += `</div>`; 
@@ -1258,6 +1354,7 @@
                             <img src="${driveDisplayUrl_(marker.afterPhotoDriveIds[pIdx], url)}" onclick="openImageMarkupModal(${marker.id}, 'after', ${pIdx})" title="마크업 그리기" loading="lazy">
                             <button class="del-photo-btn" onclick="removeMarkerPhoto(event, 'after', ${pIdx})" title="삭제">✕</button>
                             <button class="dl-photo-btn" onclick="downloadMarkerPhoto(event, ${marker.id}, 'after', ${pIdx})" title="사진 다운로드">⬇️</button>
+                            ${photoStatusHtml_(marker, 'after', pIdx)}
                         </div>`; 
                 }); 
                 html += `</div>`; 
@@ -1273,6 +1370,53 @@
     // ==========================================
     // 📸 사진 업로드: 화면은 즉시 표시 / Drive 저장은 백그라운드
     // ==========================================
+
+    const drivePhotoErrors = {};
+    let backgroundDriveBatchTotal = 0;
+    let backgroundDriveBatchDone = 0;
+
+    function photoStateKey_(markerId, type, index) { return String(markerId) + '|' + String(type) + '|' + String(index); }
+    function photoStatusHtml_(marker, type, pIdx) {
+        const isAfter = type === 'after';
+        const ids = isAfter ? (marker.afterPhotoDriveIds || []) : (marker.photoDriveIds || []);
+        const key = photoStateKey_(marker.id, type, pIdx);
+        if (ids[pIdx]) return '<div style="font-size:10px;color:#27ae60;margin-top:3px;">✅ Drive 저장완료</div>';
+        if (drivePhotoErrors[key]) return '<div style="font-size:10px;color:#e74c3c;margin-top:3px;">❌ 저장 실패 <button style="border:none;background:#e74c3c;color:#fff;border-radius:4px;padding:2px 5px;font-size:10px;" onclick="retryDrivePhoto(event,'+marker.id+',\''+type+'\','+pIdx+')">재전송</button></div>';
+        return '<div style="font-size:10px;color:#f39c12;margin-top:3px;">⏳ Drive 저장중</div>';
+    }
+
+    async function retryDrivePhoto(event, markerId, type, pIdx) {
+        if(event) event.stopPropagation();
+        const pId = currentPlanId;
+        const marker = markersByPlan[pId] && markersByPlan[pId].find(m => m.id === markerId);
+        if (!marker) return;
+        migrateMarkerData(marker);
+        const arr = type === 'after' ? marker.afterPhotoUrls : marker.photoUrls;
+        const ids = type === 'after' ? marker.afterPhotoDriveIds : marker.photoDriveIds;
+        if (ids[pIdx]) return;
+        const dataUrl = arr[pIdx];
+        if (!isPhotoDataUrl_(dataUrl)) return alert('재전송할 로컬 사진이 없습니다.');
+        const group = groups.find(g => g.plans.some(p => p.id === pId));
+        const plan = group ? group.plans.find(p => p.id === pId) : null;
+        const fileName = markerFileStem_(marker) + '_' + (type === 'after' ? '조치후' : '조치전') + '_' + String(pIdx+1).padStart(2,'0') + '_재전송_' + Date.now() + '.jpg';
+        const key = photoStateKey_(marker.id,type,pIdx);
+        delete drivePhotoErrors[key];
+        renderRightPanel();
+        try {
+            const result = await uploadDriveDirect_(dataUrl,{fileName,groupName:group?group.name:'미지정 현장',planName:plan?plan.name:'미지정 도면',markerId:marker.id,photoType:type,uploader:getCurrentUser()});
+            arr[pIdx] = result.thumbnailUrl || result.url;
+            ids[pIdx] = result.fileId || '';
+            if(type === 'after') marker.originalAfterPhotoUrls[pIdx] = arr[pIdx]; else marker.originalPhotoUrls[pIdx] = arr[pIdx];
+            if(type === 'after') marker.originalAfterPhotoDriveIds[pIdx] = ids[pIdx]; else marker.originalPhotoDriveIds[pIdx] = ids[pIdx];
+            renderRightPanel();
+            await syncMarkerToCloud(marker.id,pId);
+        } catch(e) {
+            drivePhotoErrors[key] = e.message || String(e);
+            renderRightPanel();
+            alert('사진 재전송 실패: ' + drivePhotoErrors[key]);
+        }
+    }
+
     let backgroundDriveUploadCount = 0;
     let backgroundDriveUploadTimer = null;
 
@@ -1295,7 +1439,10 @@
 
     function startBackgroundDriveUpload(marker, currentPlanIdForUpload, type, prepared, localIndex, meta) {
         backgroundDriveUploadCount++;
+        backgroundDriveBatchTotal++;
         updateDriveBgStatus(`📤 Drive 저장 중 ${backgroundDriveUploadCount}건`);
+        const stateKey = photoStateKey_(marker.id,type,localIndex);
+        delete drivePhotoErrors[stateKey];
 
         (async () => {
             try {
@@ -1307,29 +1454,28 @@
                 const ids = type === 'after' ? latestMarker.afterPhotoDriveIds : latestMarker.photoDriveIds;
                 const origArr = type === 'after' ? latestMarker.originalAfterPhotoUrls : latestMarker.originalPhotoUrls;
                 const origIds = type === 'after' ? latestMarker.originalAfterPhotoDriveIds : latestMarker.originalPhotoDriveIds;
-
-                // 이미 다른 사진이 앞에 추가된 경우에도 해당 슬롯만 갱신
                 if (arr[localIndex] !== undefined) arr[localIndex] = result.thumbnailUrl || result.url;
                 if (origArr[localIndex] !== undefined) origArr[localIndex] = result.thumbnailUrl || result.url;
                 ids[localIndex] = result.fileId || '';
                 origIds[localIndex] = result.fileId || '';
-
+                delete drivePhotoErrors[stateKey];
                 renderRightPanel();
-                // Drive ID가 확보된 후에만 Firestore에 저장
                 await syncMarkerToCloud(latestMarker.id, currentPlanIdForUpload);
             } catch (err) {
+                drivePhotoErrors[stateKey] = err.message || String(err);
+                renderRightPanel();
                 console.error('백그라운드 Drive 사진 저장 실패:', err);
-                // 실패해도 화면의 로컬 사진은 유지
             } finally {
                 backgroundDriveUploadCount = Math.max(0, backgroundDriveUploadCount - 1);
+                backgroundDriveBatchDone++;
                 updateDriveBgStatus(`📤 Drive 저장 중 ${backgroundDriveUploadCount}건`);
                 if (!backgroundDriveUploadCount) {
                     const el = ensureDriveBgStatus();
-                    el.textContent = '✅ Drive 사진 저장 완료';
+                    el.textContent = backgroundDriveBatchDone + '건 Drive 저장 처리 완료';
                     el.style.display = 'block';
-                    setTimeout(() => {
-                        if (!backgroundDriveUploadCount) el.style.display = 'none';
-                    }, 1800);
+                    setTimeout(() => { if (!backgroundDriveUploadCount) el.style.display = 'none'; }, 1800);
+                    backgroundDriveBatchTotal = 0;
+                    backgroundDriveBatchDone = 0;
                 }
             }
         })();
@@ -1358,6 +1504,8 @@
             // 화면은 사진 처리 직후 바로 표시하고 오버레이를 닫습니다.
             hideLoading();
 
+            backgroundDriveBatchTotal = files.length;
+            backgroundDriveBatchDone = 0;
             for (let i = 0; i < files.length; i++) {
                 const prepared = await prepareDefectPhotoFast(files[i], getCurrentUser());
 
@@ -1368,11 +1516,11 @@
                 originalDriveIds.push('');
                 renderRightPanel();
 
-                const markerNo = String(marker.id);
+                const markerNo = String(getMarkerNo_(marker, currentPlanId));
                 const safeDesc = (marker.desc || '내용없음').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').substring(0, 30);
                 const safeType = (marker.type || '미지정').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').substring(0, 20);
                 const stamp = Date.now();
-                const fileName = `하자_${markerNo}번_${safeType}_${safeDesc}_${type === 'after' ? '조치후' : '조치전'}_${String(i+1).padStart(2,'0')}_${stamp}.jpg`;
+                const fileName = `하자_${String(markerNo).padStart(2,'0')}번_${safeType}_${safeDesc}_${type === 'after' ? '조치후' : '조치전'}_${String(i+1).padStart(2,'0')}_${stamp}.jpg`;
 
                 // ⚡ 여기서 기다리지 않습니다. Drive 저장은 백그라운드에서 계속 진행됩니다.
                 startBackgroundDriveUpload(marker, planIdAtUpload, type, prepared, localIndex, {
@@ -1438,7 +1586,7 @@
                 html += `
                     <div class="marker-list-item" onclick="${clickHandler}">
                         <input type="checkbox" class="marker-check" value="${m.id}" data-pid="${m._pId}" onclick="event.stopPropagation()">
-                        <div class="marker-num" style="background-color:${pinColor};">${m._idx + 1}</div>
+                        <div class="marker-num" style="background-color:${pinColor};">${getMarkerNo_(m, m._pId || currentPlanId)}</div>
                         <div style="flex-grow:1; min-width:0;"><div class="marker-desc"><span class="badge-type">[${m.type||'미지정'}]</span> ${textSnippet}</div></div>
                     </div>
                 `;
@@ -1496,6 +1644,27 @@
         deselectMarker();
         requestDriveDelete_(ids);
         deleteMarkerFromCloud(mId);
+    }
+
+
+    async function migrateAllPhotosToDrive(){
+        if(!confirm('아직 Drive ID가 없는 기존 Base64 사진만 Google Drive로 이관하시겠습니까?')) return;
+        showLoading('기존 사진을 Drive로 이관 중입니다...');
+        try{
+            let targets=[];
+            for(const g of groups){ for(const p of g.plans){ (markersByPlan[p.id]||[]).forEach(m=>{ migrateMarkerData(m); ['before','after'].forEach(type=>{ const arr=type==='after'?m.afterPhotoUrls:m.photoUrls; const ids=type==='after'?m.afterPhotoDriveIds:m.photoDriveIds; arr.forEach((v,i)=>{ if(!ids[i] && isPhotoDataUrl_(v)) targets.push({g,p,m,type,i}); }); }); }); } }
+            let done=0;
+            for(const t of targets){
+                const marker=t.m; const isAfter=t.type==='after'; const arr=isAfter?marker.afterPhotoUrls:marker.photoUrls; const ids=isAfter?marker.afterPhotoDriveIds:marker.photoDriveIds;
+                const oarr=isAfter?marker.originalAfterPhotoUrls:marker.originalPhotoUrls; const oids=isAfter?marker.originalAfterPhotoDriveIds:marker.originalPhotoDriveIds;
+                const fileName=markerFileStem_(marker,t.p.id)+'_'+(isAfter?'조치후':'조치전')+'_'+String(t.i+1).padStart(2,'0')+'_이관_'+Date.now()+'.jpg';
+                const dataUrl=await normalizePhotoUnderBytes(arr[t.i],260*1024);
+                const result=await uploadDriveDirect_(dataUrl,{fileName,groupName:t.g.name,planName:t.p.name,markerId:marker.id,photoType:t.type,uploader:getCurrentUser()});
+                arr[t.i]=result.thumbnailUrl||result.url; ids[t.i]=result.fileId||''; oarr[t.i]=arr[t.i]; oids[t.i]=ids[t.i];
+                await syncMarkerToCloud(marker.id,t.p.id); done++; document.getElementById('loadingText').innerText=`사진 Drive 이관 ${done}/${targets.length}`;
+            }
+            renderRightPanel(); alert(`기존 사진 Drive 이관 완료: ${done}건`);
+        }catch(e){ alert('사진 이관 실패: '+e.message); } finally{ hideLoading(); }
     }
 
     // ==========================================
@@ -1587,7 +1756,7 @@
                         const pinColor = isCompleted ? '#27ae60' : getTypeColor(m.type || '미지정');
                         html += `
                             <div class="marker-list-item" onclick="jumpToMarkerFromGlobal('${m._pId}', ${m.id})">
-                                <div class="marker-num" style="background-color:${pinColor};">${m._idx + 1}</div>
+                                <div class="marker-num" style="background-color:${pinColor};">${getMarkerNo_(m, m._pId || currentPlanId)}</div>
                                 <div style="flex-grow:1; min-width:0;">
                                     <div class="marker-desc"><span class="badge-type">[${m.type||'미지정'}]</span> ${textSnippet}</div>
                                 </div>
@@ -1606,7 +1775,7 @@
                 const locInfo = `<div style="font-size:11px; color:#3498db; margin-bottom:3px; font-weight:bold;">[${m._gName}] ${m._pName}</div>`;
                 html += `
                     <div class="marker-list-item" onclick="jumpToMarkerFromGlobal('${m._pId}', ${m.id})">
-                        <div class="marker-num" style="background-color:${pinColor};">${m._idx + 1}</div>
+                        <div class="marker-num" style="background-color:${pinColor};">${getMarkerNo_(m, m._pId || currentPlanId)}</div>
                         <div style="flex-grow:1; min-width:0;">
                             ${locInfo}
                             <div class="marker-desc"><span class="badge-type">[${m.type||'미지정'}]</span> ${textSnippet}</div>
@@ -1623,6 +1792,15 @@
     function jumpToMarkerFromGlobal(planId, markerId) {
         closeGlobalListModal(); 
         if (currentPlanId !== planId) changeFloorPlan(planId); 
+        renderGlobalList();
+    }
+
+
+    function openPendingDefectsModal(){
+        openGlobalListModal();
+        globalFilterStatus='pending';
+        const allBtn=document.getElementById('gf_all'), pBtn=document.getElementById('gf_pending'), cBtn=document.getElementById('gf_completed');
+        if(allBtn) allBtn.classList.remove('active'); if(pBtn) pBtn.classList.add('active'); if(cBtn) cBtn.classList.remove('active');
         renderGlobalList();
     }
 
@@ -1720,6 +1898,62 @@
     
     markupCanvas.addEventListener('mousedown', startMarkupDraw); markupCanvas.addEventListener('mousemove', doMarkupDraw); markupCanvas.addEventListener('mouseup', endMarkupDraw); markupCanvas.addEventListener('mouseout', endMarkupDraw); markupCanvas.addEventListener('touchstart', startMarkupDraw, {passive:false}); markupCanvas.addEventListener('touchmove', doMarkupDraw, {passive:false}); markupCanvas.addEventListener('touchend', endMarkupDraw);
 
+
+    // ==========================================================
+    // 🗺️ 도면 Google Drive 저장
+    // ==========================================================
+    async function preparePlanForDrive_(file, maxBytes=700*1024) {
+        const srcUrl = URL.createObjectURL(file);
+        try {
+            const img = await new Promise((resolve,reject)=>{ const im=new Image(); im.onload=()=>resolve(im); im.onerror=()=>reject(new Error('도면을 읽을 수 없습니다.')); im.src=srcUrl; });
+            let w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+            const maxDim=1600;
+            if(Math.max(w,h)>maxDim){ const r=maxDim/Math.max(w,h); w=Math.round(w*r); h=Math.round(h*r); }
+            const canvas=document.createElement('canvas'); const ctx=canvas.getContext('2d',{alpha:false,desynchronized:true});
+            let quality=0.72;
+            for(let pass=0;pass<5;pass++){
+                canvas.width=w; canvas.height=h; ctx.fillStyle='#fff'; ctx.fillRect(0,0,w,h); ctx.drawImage(img,0,0,w,h);
+                const dataUrl=canvas.toDataURL('image/jpeg',quality); const blob=await (await fetch(dataUrl)).blob();
+                if(blob.size<=maxBytes) return dataUrl;
+                quality -= 0.10;
+                if(quality<0.45){ w=Math.max(600,Math.round(w*0.82)); h=Math.max(400,Math.round(h*0.82)); quality=0.62; }
+            }
+            return canvas.toDataURL('image/jpeg',0.42);
+        } finally { URL.revokeObjectURL(srcUrl); }
+    }
+
+    async function uploadPlanDrive_(dataUrl, meta) {
+        const requestId=makeDriveRequestId();
+        await postDriveDirect_({event:'plan_drive',action:'upload',requestId,fileName:meta.fileName,mimeType:'image/jpeg',base64:dataUrlToBase64(dataUrl),groupName:meta.groupName||'미지정 현장',planName:meta.planName||'미지정 도면'});
+        return await waitForDriveResult_(requestId,{kind:'plan',fileName:meta.fileName,groupName:meta.groupName||'미지정 현장'},10000);
+    }
+
+    async function migratePlanToDrive_(plan, groupName) {
+        if (!plan || plan.driveId || !isPhotoDataUrl_(plan.url)) return false;
+        const dataUrl=await normalizePhotoUnderBytes(plan.url,700*1024);
+        const fileName='도면_' + String(plan.id) + '_' + String(plan.name||'도면').replace(/[\\/:*?"<>|]/g,'_').substring(0,50) + '_' + Date.now() + '.jpg';
+        const result=await uploadPlanDrive_(dataUrl,{fileName,groupName,planName:plan.name});
+        plan.driveId=result.fileId; plan.url=result.thumbnailUrl || result.url;
+        await syncPlanToCloud(plan.id); await syncMetaToCloud();
+        return true;
+    }
+
+    async function migrateAllPlansToDrive() {
+        if(!confirm('아직 Base64로 저장된 기존 도면만 Google Drive로 이관하시겠습니까?')) return;
+        showLoading('기존 도면을 Drive로 이관 중입니다...');
+        try{
+            let total=0, done=0;
+            groups.forEach(g=>g.plans.forEach(p=>{ if(!p.driveId && isPhotoDataUrl_(p.url)) total++; }));
+            for(const g of groups){
+                for(const p of g.plans){
+                    if(p.driveId || !isPhotoDataUrl_(p.url)) continue;
+                    await migratePlanToDrive_(p,g.name); done++; document.getElementById('loadingText').innerText=`도면 Drive 이관 ${done}/${total}`; renderSidebar();
+                }
+            }
+            renderSidebar(); if(currentPlanId) changeFloorPlan(currentPlanId); alert('기존 도면 Drive 이관이 완료되었습니다.');
+        }catch(e){ alert('도면 이관 실패: '+e.message); } finally { hideLoading(); }
+    }
+
     // ==========================================
     // 대시보드 통계 및 파일 내보내기 
     // ==========================================
@@ -1755,7 +1989,7 @@
 
     function openBackupModal() { document.getElementById('backupModal').style.display = 'flex'; }
     function closeBackupModal() { document.getElementById('backupModal').style.display = 'none'; }
-    function exportJSONData() { const backupData = { exportDate: new Date().toISOString(), groups: groups, markersByPlan: markersByPlan, userList: userList, defectTypes: defectTypes }; const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2)); const downloadAnchor = document.createElement('a'); downloadAnchor.setAttribute("href", dataStr); downloadAnchor.setAttribute("download", `defect_backup_${Date.now()}.json`); document.body.appendChild(downloadAnchor); downloadAnchor.click(); downloadAnchor.remove(); }
+    function exportJSONData() { const backupData = { exportDate: new Date().toISOString(), groups: compactGroupsForCloud_(), markersByPlan: compactMarkersByPlanForCloud_(), userList: userList, defectTypes: defectTypes }; const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backupData, null, 2)); const downloadAnchor = document.createElement('a'); downloadAnchor.setAttribute("href", dataStr); downloadAnchor.setAttribute("download", `defect_backup_${Date.now()}.json`); document.body.appendChild(downloadAnchor); downloadAnchor.click(); downloadAnchor.remove(); }
     document.getElementById('modalJsonImportInput').addEventListener('change', function(e) {
         const file = e.target.files[0]; if (!file) return; const reader = new FileReader();
         reader.onload = function(event) {
@@ -1788,7 +2022,7 @@
                 markers.forEach((marker, idx) => {
                     if (mode === 'pending' && marker.status === 'completed') return;
                     let historyStr = ''; if(marker.history && marker.history.length > 0) { historyStr = marker.history.map(h => `[${h.date}] ${h.author}: ${h.text}`).join(String.fromCharCode(10)); }
-                    groupRows.push({ "도면명": plan.name, "마커 번호": idx + 1, "하자 유형": marker.type || '미지정', "처리 상태": marker.status === 'completed' ? '조치 완료' : '미조치', "접수 담당자": marker.authorName || '', "접수 일시": marker.createdAt || '', "하자 접수 내용": marker.desc || '', "조치 이력(코멘트)": historyStr, "최종 조치자": marker.resolverName || '', "최종 조치 일시": marker.resolvedAt || '' });
+                    groupRows.push({ "도면명": plan.name, "마커 번호": getMarkerNo_(marker, plan.id), "하자 유형": marker.type || '미지정', "처리 상태": marker.status === 'completed' ? '조치 완료' : '미조치', "접수 담당자": marker.authorName || '', "접수 일시": marker.createdAt || '', "하자 접수 내용": marker.desc || '', "조치 이력(코멘트)": historyStr, "최종 조치자": marker.resolverName || '', "최종 조치 일시": marker.resolvedAt || '' });
                 });
             });
             if (groupRows.length > 0) { totalExportedCount += groupRows.length; const worksheet = XLSX.utils.json_to_sheet(groupRows); worksheet['!cols'] = [ { wch: 18 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 22 }, { wch: 30 }, { wch: 40 }, { wch: 15 }, { wch: 22 } ]; let sheetName = group.name.replace(/[\/?*:[\]]/g, '').trim().slice(0, 30) || '그룹'; XLSX.utils.book_append_sheet(workbook, worksheet, sheetName); }
@@ -1809,8 +2043,8 @@
             const originalIdx = (markersByPlan[currentPlanId] || []).findIndex(orig => orig.id === m.id); const isCompleted = m.status === 'completed'; const pinColor = isCompleted ? '#27ae60' : getTypeColor(m.type || '미지정'); const typeChar = (m.type && m.type !== '미지정') ? m.type.substring(0,1) : '!'; const shortDesc = m.desc ? m.desc.substring(0, 12) + (m.desc.length > 12 ? '...' : '') : '미입력';
             pinsHTML += `
                 <div style="position:absolute; left:${m.x}%; top:${m.y}%; transform:translate(-50%,-100%); display:flex; flex-direction:column; align-items:center; z-index:10;">
-                    <div style="width:34px; height:34px; background:${pinColor}; color:white; border-radius:50%; border:2px solid white; text-align:center; font-weight:bold; box-shadow:0 2px 6px rgba(0,0,0,0.4); position:relative; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center;"><div style="font-size:9px; line-height:1; margin-top:2px;">${typeChar}</div><div style="font-size:13px; line-height:1; margin-top:1px;">${originalIdx + 1}</div><div style="content:''; position:absolute; bottom:-7px; left:50%; transform:translateX(-50%); border-width:7px 6px 0; border-style:solid; border-color:${pinColor} transparent transparent transparent;"></div></div>
-                    <div style="margin-top:8px; background:rgba(255,255,255,0.95); border:1px solid #ccc; padding:3px 6px; border-radius:4px; font-size:11px; font-weight:bold; color:#333; white-space:nowrap; box-shadow:0 1px 3px rgba(0,0,0,0.2);">${originalIdx + 1}. [${m.type||'미지정'}] ${shortDesc}</div>
+                    <div style="width:34px; height:34px; background:${pinColor}; color:white; border-radius:50%; border:2px solid white; text-align:center; font-weight:bold; box-shadow:0 2px 6px rgba(0,0,0,0.4); position:relative; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center;"><div style="font-size:9px; line-height:1; margin-top:2px;">${typeChar}</div><div style="font-size:13px; line-height:1; margin-top:1px;">${getMarkerNo_(m, currentPlanId)}</div><div style="content:''; position:absolute; bottom:-7px; left:50%; transform:translateX(-50%); border-width:7px 6px 0; border-style:solid; border-color:${pinColor} transparent transparent transparent;"></div></div>
+                    <div style="margin-top:8px; background:rgba(255,255,255,0.95); border:1px solid #ccc; padding:3px 6px; border-radius:4px; font-size:11px; font-weight:bold; color:#333; white-space:nowrap; box-shadow:0 1px 3px rgba(0,0,0,0.2);">${getMarkerNo_(m, currentPlanId)}. [${m.type||'미지정'}] ${shortDesc}</div>
                 </div>
             `;
         });
@@ -1821,13 +2055,13 @@
             defectCardsHTML += `<div style="page-break-after: auto; page-break-inside: avoid;"><h2 style="color:#2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 8px; margin-top: 30px; margin-bottom: 20px;"><span style="background:#3498db; color:white; padding:4px 10px; border-radius:4px; font-size:18px;">🏷️ ${type}</span> 하자 항목 (총 ${markersOfType.length}건)</h2>`;
             markersOfType.forEach((m) => {
                 const originalIdx = (markersByPlan[currentPlanId] || []).findIndex(orig => orig.id === m.id); const isCompleted = m.status === 'completed'; const statusBadgeHTML = isCompleted ? `<span style="background:#d4efdf; color:#27ae60; padding:4px 10px; border-radius:4px; font-size:13px; font-weight:bold;">🟢 완료</span>` : `<span style="background:#fadbd8; color:#e74c3c; padding:4px 10px; border-radius:4px; font-size:13px; font-weight:bold;">🔴 미조치</span>`;
-                let beforePhotosHTML = ''; if (m.photoUrls && m.photoUrls.length > 0) { m.photoUrls.forEach((url) => { beforePhotosHTML += `<img src="${url}" style="width:100%; max-width:300px; height:200px; object-fit:cover; border-radius:6px; border:1px solid #ccc;">`; }); } else { beforePhotosHTML = '<div style="color:#aaa; font-size:12px; padding:20px; background:#f8f9fa; border-radius:4px; text-align:center; width:100%;">사진 없음</div>'; }
-                let afterPhotosHTML = ''; if (m.afterPhotoUrls && m.afterPhotoUrls.length > 0) { m.afterPhotoUrls.forEach((url) => { afterPhotosHTML += `<img src="${url}" style="width:100%; max-width:300px; height:200px; object-fit:cover; border-radius:6px; border:1px solid #ccc;">`; }); } else { afterPhotosHTML = '<div style="color:#aaa; font-size:12px; padding:20px; background:#f8f9fa; border-radius:4px; text-align:center; width:100%;">조치 사진 없음</div>'; }
+                let beforePhotosHTML = ''; if (m.photoUrls && m.photoUrls.length > 0) { m.photoUrls.forEach((url) => { beforePhotosHTML += `<img src="${driveDisplayUrl_((m.photoDriveIds||[])[m.photoUrls.indexOf(url)], url)}" style="width:100%; max-width:300px; height:200px; object-fit:cover; border-radius:6px; border:1px solid #ccc;">`; }); } else { beforePhotosHTML = '<div style="color:#aaa; font-size:12px; padding:20px; background:#f8f9fa; border-radius:4px; text-align:center; width:100%;">사진 없음</div>'; }
+                let afterPhotosHTML = ''; if (m.afterPhotoUrls && m.afterPhotoUrls.length > 0) { m.afterPhotoUrls.forEach((url) => { afterPhotosHTML += `<img src="${driveDisplayUrl_((m.afterPhotoDriveIds||[])[m.afterPhotoUrls.indexOf(url)], url)}" style="width:100%; max-width:300px; height:200px; object-fit:cover; border-radius:6px; border:1px solid #ccc;">`; }); } else { afterPhotosHTML = '<div style="color:#aaa; font-size:12px; padding:20px; background:#f8f9fa; border-radius:4px; text-align:center; width:100%;">조치 사진 없음</div>'; }
                 let historyHtml = ''; if (m.history && m.history.length > 0) { historyHtml = m.history.map(h => `<div style="margin-bottom:6px; padding-bottom:6px; border-bottom:1px dashed #ccc; font-size:13px;"><div style="font-size:11px; color:#777;"><b>${h.author}</b> ${h.date}</div><div>${h.text}</div></div>`).join(''); } else { historyHtml = '<div style="color:#aaa; font-size:12px;">이력 없음</div>'; }
 
                 defectCardsHTML += `
                     <div style="border:2px solid ${isCompleted ? '#27ae60' : '#2c3e50'}; border-radius:10px; margin-bottom:25px; padding:20px; background:#fff; page-break-inside:avoid; box-shadow:0 2px 5px rgba(0,0,0,0.05);">
-                        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #34495e; padding-bottom:10px; margin-bottom:15px;"><span style="font-size:16px; font-weight:bold; color:#2c3e50;">📍 [마커번호: ${originalIdx + 1}]</span><div>${statusBadgeHTML}</div></div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:2px solid #34495e; padding-bottom:10px; margin-bottom:15px;"><span style="font-size:16px; font-weight:bold; color:#2c3e50;">📍 [마커번호: ${getMarkerNo_(m, currentPlanId)}]</span><div>${statusBadgeHTML}</div></div>
                         <div style="display:flex; gap:15px; margin-bottom:15px;">
                             <div style="flex:1; background:#fdf2e9; padding:12px; border-radius:6px; border-left:4px solid #e74c3c;"><div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;"><strong style="color:#e74c3c; font-size:13px;">📝 접수 내용:</strong><span style="font-size:11px; color:#7f8c8d;">${m.authorName || '미상'} (${m.createdAt || '-'})</span></div><div style="font-size:14px; line-height:1.5;">${m.desc ? m.desc.split(String.fromCharCode(10)).join('<br>') : '내용 없음'}</div></div>
                             <div style="flex:1; background:#e8f8f5; padding:12px; border-radius:6px; border-left:4px solid #27ae60;"><div style="margin-bottom:6px;"><strong style="color:#27ae60; font-size:13px;">💬 조치 진행 이력:</strong></div>${historyHtml}</div>
@@ -1856,7 +2090,7 @@
         printWin.document.write(reportHTML); printWin.document.close();
     }
 
-    window.onload = async function() { await bootstrapApp(); };
+    window.onload = async function() { await bootstrapApp(); setTimeout(() => ensureAllMarkerNumbers_(), 2500); };
 </script>
 </body>
 </html>
