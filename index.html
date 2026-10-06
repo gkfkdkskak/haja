@@ -437,7 +437,7 @@
     // 브라우저는 JSONP(GET)로 결과만 확인합니다.
     // ==========================================================
     const DEFECT_DRIVE_GAS_URL = "https://script.google.com/macros/s/AKfycbypKdpp5DOD00VZV29Q5F_g_1VmlypQzZGjJHBcqM5rju5FHBAPY36m--ssfYquDn4jmQ/exec";
-    const DEFECT_UPLOAD_TARGET_BYTES = 260 * 1024;
+    const DEFECT_UPLOAD_TARGET_BYTES = 220 * 1024;
     const DEFECT_UPLOAD_HARD_MAX_BYTES = 1024 * 1024;
 
     function makeDriveRequestId() {
@@ -494,56 +494,80 @@
                 im.src = srcUrl;
             });
 
-            let maxDim = 1280;
-            let width = img.naturalWidth || img.width;
-            let height = img.naturalHeight || img.height;
+            const srcW = img.naturalWidth || img.width;
+            const srcH = img.naturalHeight || img.height;
+            const maxDim = 1024;
+            let width = srcW;
+            let height = srcH;
             if (Math.max(width, height) > maxDim) {
                 const ratio = maxDim / Math.max(width, height);
                 width = Math.max(1, Math.round(width * ratio));
                 height = Math.max(1, Math.round(height * ratio));
             }
 
-            let quality = 0.72;
-            let dataUrl = '';
-            for (let pass = 0; pass < 7; pass++) {
-                const canvas = document.createElement('canvas');
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d', {alpha:false, desynchronized:true});
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, width, height);
+            ctx.drawImage(img, 0, 0, width, height);
+
+            const now = new Date().toLocaleString();
+            const watermarkText = `[ ${now} - ${authorName || '미상'} ]`;
+            const fontSize = Math.max(12, Math.round(width / 48));
+            const padding = 5;
+            ctx.font = `bold ${fontSize}px sans-serif`;
+            const textWidth = ctx.measureText(watermarkText).width;
+            const rectW = textWidth + padding * 2;
+            const rectH = fontSize + padding * 2;
+            const rectX = Math.max(0, width - rectW - 8);
+            const rectY = Math.max(0, height - rectH - 8);
+            ctx.fillStyle = 'rgba(0,0,0,0.62)';
+            ctx.fillRect(rectX, rectY, rectW, rectH);
+            ctx.fillStyle = '#f1c40f';
+            ctx.textBaseline = 'top';
+            ctx.fillText(watermarkText, rectX + padding, rectY + padding);
+
+            // 1차 압축: 대부분의 휴대폰 사진은 여기서 끝납니다.
+            let dataUrl = canvas.toDataURL('image/jpeg', 0.58);
+            let blob = await (await fetch(dataUrl)).blob();
+            if (blob.size <= DEFECT_UPLOAD_TARGET_BYTES) return {dataUrl, bytes:blob.size};
+
+            // 2차: 같은 캔버스에서 품질만 한 번 낮춥니다.
+            dataUrl = canvas.toDataURL('image/jpeg', 0.48);
+            blob = await (await fetch(dataUrl)).blob();
+            if (blob.size <= DEFECT_UPLOAD_TARGET_BYTES) return {dataUrl, bytes:blob.size};
+
+            // 3차: 캔버스 크기를 800px 이하로 줄여 마지막 한 번만 재인코딩합니다.
+            const shrink = 800 / Math.max(width, height);
+            if (shrink < 1) {
+                width = Math.max(1, Math.round(width * shrink));
+                height = Math.max(1, Math.round(height * shrink));
                 canvas.width = width;
                 canvas.height = height;
-                const ctx = canvas.getContext('2d', {alpha:false});
-                ctx.fillStyle = '#fff';
-                ctx.fillRect(0, 0, width, height);
-                ctx.drawImage(img, 0, 0, width, height);
-
-                const now = new Date().toLocaleString();
-                const watermarkText = `[ ${now} - ${authorName || '미상'} ]`;
-                const fontSize = Math.max(14, Math.round(width / 42));
-                ctx.font = `bold ${fontSize}px sans-serif`;
-                const padding = 7;
-                const textWidth = ctx.measureText(watermarkText).width;
-                const rectW = textWidth + padding * 2;
-                const rectH = fontSize + padding * 2;
-                const rectX = Math.max(0, width - rectW - 10);
-                const rectY = Math.max(0, height - rectH - 10);
-                ctx.fillStyle = 'rgba(0,0,0,0.65)';
-                ctx.fillRect(rectX, rectY, rectW, rectH);
-                ctx.fillStyle = '#f1c40f';
-                ctx.textBaseline = 'top';
-                ctx.fillText(watermarkText, rectX + padding, rectY + padding);
-
-                dataUrl = canvas.toDataURL('image/jpeg', quality);
-                const bytes = Math.floor((dataUrl.length - dataUrl.indexOf(',') - 1) * 0.75);
-                if (bytes <= DEFECT_UPLOAD_TARGET_BYTES) return {dataUrl, bytes};
-
-                if (quality > 0.48) quality -= 0.06;
-                else {
-                    width = Math.max(480, Math.round(width * 0.84));
-                    height = Math.max(480, Math.round(height * 0.84));
-                    quality = 0.68;
-                }
+                const ctx2 = canvas.getContext('2d', {alpha:false, desynchronized:true});
+                ctx2.fillStyle = '#fff';
+                ctx2.fillRect(0, 0, width, height);
+                ctx2.drawImage(img, 0, 0, width, height);
+                const fs2 = Math.max(11, Math.round(width / 48));
+                const pad2 = 5;
+                ctx2.font = `bold ${fs2}px sans-serif`;
+                const tw2 = ctx2.measureText(watermarkText).width;
+                const rw2 = tw2 + pad2 * 2;
+                const rh2 = fs2 + pad2 * 2;
+                const rx2 = Math.max(0, width - rw2 - 6);
+                const ry2 = Math.max(0, height - rh2 - 6);
+                ctx2.fillStyle = 'rgba(0,0,0,0.62)';
+                ctx2.fillRect(rx2, ry2, rw2, rh2);
+                ctx2.fillStyle = '#f1c40f';
+                ctx2.textBaseline = 'top';
+                ctx2.fillText(watermarkText, rx2 + pad2, ry2 + pad2);
+                dataUrl = canvas.toDataURL('image/jpeg', 0.46);
+                blob = await (await fetch(dataUrl)).blob();
+                if (blob.size <= DEFECT_UPLOAD_HARD_MAX_BYTES) return {dataUrl, bytes:blob.size};
             }
-            const finalBlob = await (await fetch(dataUrl)).blob();
-            if (finalBlob.size > DEFECT_UPLOAD_HARD_MAX_BYTES) throw new Error('사진을 충분히 압축하지 못했습니다.');
-            return {dataUrl, bytes:finalBlob.size};
+            throw new Error('사진을 1MB 이하로 압축하지 못했습니다.');
         } finally {
             URL.revokeObjectURL(srcUrl);
         }
@@ -607,10 +631,10 @@
                         try { delete window[cb]; } catch(e) { window[cb] = undefined; }
                         s.remove();
                     }
-                }, 2200);
+                }, 1400);
             }
             poll();
-            timer = setInterval(poll, 300);
+            timer = setInterval(poll, 500);
         });
     }
 
@@ -1193,6 +1217,31 @@
 
     function addMarkerHistory() { const input = document.getElementById('newHistoryInput'); const text = input.value.trim(); if(!text) return; const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId); if(marker) { marker.history.push({ date: new Date().toLocaleString(), author: getCurrentUser(), text: text }); syncMarkerToCloud(marker.id, currentPlanId); renderRightPanel(); } }
 
+    function safePhotoFilePart_(value, maxLen = 28) {
+        return String(value || '')
+            .replace(/[\\/:*?"<>|]/g, '_')
+            .replace(/[\r\n\t]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .substring(0, maxLen) || '미지정';
+    }
+
+    function getMarkerDisplayNo_(marker) {
+        const arr = markersByPlan[currentPlanId] || [];
+        const idx = arr.findIndex(m => m.id === marker.id);
+        return idx >= 0 ? idx + 1 : marker.id;
+    }
+
+    function makeDefectPhotoFileName_(marker, type, index, suffix = '') {
+        const no = String(getMarkerDisplayNo_(marker)).padStart(2, '0');
+        const defectType = safePhotoFilePart_(marker.type || '미지정', 20);
+        const desc = safePhotoFilePart_(marker.desc || '내용없음', 30);
+        const kind = type === 'after' ? '조치후' : '조치전';
+        const seq = String(index + 1).padStart(2, '0');
+        const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').substring(0, 14);
+        return `하자_${no}번_${defectType}_${desc}_${kind}_${seq}${suffix ? '_' + suffix : ''}_${stamp}.jpg`;
+    }
+
     async function uploadMarkerPhotos(e, type) {
         const files = e.target.files;
         if (files && files.length > 0) {
@@ -1217,13 +1266,13 @@
                     if (prepared.bytes > DEFECT_UPLOAD_HARD_MAX_BYTES) throw new Error('사진이 1MB를 초과했습니다.');
                     showLoading(`사진 ${i + 1}/${files.length} Drive 전송 중...`);
 
-                    const fileName = `하자_${marker.id}_${type}_${Date.now()}_${i + 1}.jpg`;
+                    const fileName = makeDefectPhotoFileName_(marker, type, i);
                     const result = await uploadDriveDirect_(prepared.dataUrl, {
                         fileName, groupName, planName, markerId:marker.id, photoType:type, uploader:getCurrentUser()
                     }, stage => showLoading(`사진 ${i + 1}/${files.length} ${stage}...`));
 
-                    targetArray.push(result.url);
-                    originalArray.push(result.url);
+                    targetArray.push(result.thumbnailUrl || result.url);
+                    originalArray.push(result.thumbnailUrl || result.url);
                     driveIds.push(result.fileId);
                     originalDriveIds.push(result.fileId);
                 }
@@ -1534,7 +1583,7 @@
             const group = groups.find(g => g.plans.some(p => p.id === currentPlanId));
             const plan = group ? group.plans.find(p => p.id === currentPlanId) : null;
             const result = await driveUploadFresh_(finalData, {
-                fileName: `하자_${marker.id}_${currentEditPhotoType}_markup_${Date.now()}.jpg`,
+                fileName: makeDefectPhotoFileName_(marker, currentEditPhotoType, currentEditPhotoIndex, '마크업'),
                 groupName: group ? group.name : '미지정 현장', planName: plan ? plan.name : '미지정 도면',
                 markerId: marker.id, photoType: currentEditPhotoType, uploader: getCurrentUser()
             });
