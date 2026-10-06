@@ -437,7 +437,7 @@
     // 브라우저는 JSONP(GET)로 결과만 확인합니다.
     // ==========================================================
     const DEFECT_DRIVE_GAS_URL = "https://script.google.com/macros/s/AKfycbypKdpp5DOD00VZV29Q5F_g_1VmlypQzZGjJHBcqM5rju5FHBAPY36m--ssfYquDn4jmQ/exec";
-    const DEFECT_UPLOAD_TARGET_BYTES = 220 * 1024;
+    const DEFECT_UPLOAD_TARGET_BYTES = 180 * 1024;
     const DEFECT_UPLOAD_HARD_MAX_BYTES = 1024 * 1024;
 
     function makeDriveRequestId() {
@@ -496,7 +496,7 @@
 
             const srcW = img.naturalWidth || img.width;
             const srcH = img.naturalHeight || img.height;
-            const maxDim = 1024;
+            const maxDim = 900;
             let width = srcW;
             let height = srcH;
             if (Math.max(width, height) > maxDim) {
@@ -530,17 +530,17 @@
             ctx.fillText(watermarkText, rectX + padding, rectY + padding);
 
             // 1차 압축: 대부분의 휴대폰 사진은 여기서 끝납니다.
-            let dataUrl = canvas.toDataURL('image/jpeg', 0.58);
+            let dataUrl = canvas.toDataURL('image/jpeg', 0.56);
             let blob = await (await fetch(dataUrl)).blob();
             if (blob.size <= DEFECT_UPLOAD_TARGET_BYTES) return {dataUrl, bytes:blob.size};
 
             // 2차: 같은 캔버스에서 품질만 한 번 낮춥니다.
-            dataUrl = canvas.toDataURL('image/jpeg', 0.48);
+            dataUrl = canvas.toDataURL('image/jpeg', 0.44);
             blob = await (await fetch(dataUrl)).blob();
             if (blob.size <= DEFECT_UPLOAD_TARGET_BYTES) return {dataUrl, bytes:blob.size};
 
             // 3차: 캔버스 크기를 800px 이하로 줄여 마지막 한 번만 재인코딩합니다.
-            const shrink = 800 / Math.max(width, height);
+            const shrink = 700 / Math.max(width, height);
             if (shrink < 1) {
                 width = Math.max(1, Math.round(width * shrink));
                 height = Math.max(1, Math.round(height * shrink));
@@ -563,7 +563,7 @@
                 ctx2.fillStyle = '#f1c40f';
                 ctx2.textBaseline = 'top';
                 ctx2.fillText(watermarkText, rx2 + pad2, ry2 + pad2);
-                dataUrl = canvas.toDataURL('image/jpeg', 0.46);
+                dataUrl = canvas.toDataURL('image/jpeg', 0.40);
                 blob = await (await fetch(dataUrl)).blob();
                 if (blob.size <= DEFECT_UPLOAD_HARD_MAX_BYTES) return {dataUrl, bytes:blob.size};
             }
@@ -634,7 +634,7 @@
                 }, 1400);
             }
             poll();
-            timer = setInterval(poll, 500);
+            timer = setInterval(poll, 350);
         });
     }
 
@@ -657,7 +657,7 @@
             uploader:meta.uploader || getCurrentUser()
         });
         if (stageCb) stageCb('Drive 저장 확인');
-        return await waitForDriveResult_(requestId, 8000);
+        return await waitForDriveResult_(requestId, 6000);
     }
 
     function requestDriveDelete_(fileIds) {
@@ -1217,74 +1217,69 @@
 
     function addMarkerHistory() { const input = document.getElementById('newHistoryInput'); const text = input.value.trim(); if(!text) return; const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId); if(marker) { marker.history.push({ date: new Date().toLocaleString(), author: getCurrentUser(), text: text }); syncMarkerToCloud(marker.id, currentPlanId); renderRightPanel(); } }
 
-    function safePhotoFilePart_(value, maxLen = 28) {
-        return String(value || '')
-            .replace(/[\\/:*?"<>|]/g, '_')
-            .replace(/[\r\n\t]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim()
-            .substring(0, maxLen) || '미지정';
-    }
-
-    function getMarkerDisplayNo_(marker) {
-        const arr = markersByPlan[currentPlanId] || [];
-        const idx = arr.findIndex(m => m.id === marker.id);
-        return idx >= 0 ? idx + 1 : marker.id;
-    }
-
-    function makeDefectPhotoFileName_(marker, type, index, suffix = '') {
-        const no = String(getMarkerDisplayNo_(marker)).padStart(2, '0');
-        const defectType = safePhotoFilePart_(marker.type || '미지정', 20);
-        const desc = safePhotoFilePart_(marker.desc || '내용없음', 30);
-        const kind = type === 'after' ? '조치후' : '조치전';
-        const seq = String(index + 1).padStart(2, '0');
-        const stamp = new Date().toISOString().replace(/[-:TZ.]/g, '').substring(0, 14);
-        return `하자_${no}번_${defectType}_${desc}_${kind}_${seq}${suffix ? '_' + suffix : ''}_${stamp}.jpg`;
-    }
-
     async function uploadMarkerPhotos(e, type) {
         const files = e.target.files;
-        if (files && files.length > 0) {
-            showLoading('사진을 400KB 이하로 압축하여 Google Drive에 저장 중입니다...');
-            try {
-                const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId);
-                if (!marker) throw new Error('선택된 하자를 찾을 수 없습니다.');
-                migrateMarkerData(marker);
-                const isAfter = type === 'after';
-                const targetArray = isAfter ? marker.afterPhotoUrls : marker.photoUrls;
-                const originalArray = isAfter ? marker.originalAfterPhotoUrls : marker.originalPhotoUrls;
-                const driveIds = isAfter ? marker.afterPhotoDriveIds : marker.photoDriveIds;
-                const originalDriveIds = isAfter ? marker.originalAfterPhotoDriveIds : marker.originalPhotoDriveIds;
-                const group = groups.find(g => g.plans.some(p => p.id === currentPlanId));
-                const plan = group ? group.plans.find(p => p.id === currentPlanId) : null;
-                const groupName = group ? group.name : '미지정 현장';
-                const planName = plan ? plan.name : '미지정 도면';
+        if (!files || !files.length) { e.target.value = ''; return; }
 
-                for (let i = 0; i < files.length; i++) {
-                    showLoading(`사진 ${i + 1}/${files.length} 빠르게 압축 중...`);
-                    const prepared = await prepareDefectPhotoFast(files[i], getCurrentUser());
-                    if (prepared.bytes > DEFECT_UPLOAD_HARD_MAX_BYTES) throw new Error('사진이 1MB를 초과했습니다.');
-                    showLoading(`사진 ${i + 1}/${files.length} Drive 전송 중...`);
+        try {
+            const marker = markersByPlan[currentPlanId].find(m => m.id === selectedMarkerId);
+            if (!marker) throw new Error('선택된 하자를 찾을 수 없습니다.');
+            migrateMarkerData(marker);
 
-                    const fileName = makeDefectPhotoFileName_(marker, type, i);
+            const isAfter = type === 'after';
+            const targetArray = isAfter ? marker.afterPhotoUrls : marker.photoUrls;
+            const originalArray = isAfter ? marker.originalAfterPhotoUrls : marker.originalPhotoUrls;
+            const driveIds = isAfter ? marker.afterPhotoDriveIds : marker.photoDriveIds;
+            const originalDriveIds = isAfter ? marker.originalAfterPhotoDriveIds : marker.originalPhotoDriveIds;
+            const group = groups.find(g => g.plans.some(p => p.id === currentPlanId));
+            const plan = group ? group.plans.find(p => p.id === currentPlanId) : null;
+            const groupName = group ? group.name : '미지정 현장';
+            const planName = plan ? plan.name : '미지정 도면';
+
+            const jobs = [];
+            for (let i = 0; i < files.length; i++) {
+                showLoading(`사진 ${i + 1}/${files.length} 처리 중...`);
+                const prepared = await prepareDefectPhotoFast(files[i], getCurrentUser());
+
+                // 화면에는 먼저 로컬 사진을 즉시 표시합니다.
+                const localIndex = targetArray.length;
+                targetArray.push(prepared.dataUrl);
+                originalArray.push(prepared.dataUrl);
+                driveIds.push('');
+                originalDriveIds.push('');
+                renderRightPanel();
+
+                const markerNo = String(marker.id);
+                const safeDesc = (marker.desc || '내용없음').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').substring(0, 30);
+                const safeType = (marker.type || '미지정').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_').substring(0, 20);
+                const stamp = Date.now();
+                const fileName = `하자_${markerNo}번_${safeType}_${safeDesc}_${type === 'after' ? '조치후' : '조치전'}_${String(i+1).padStart(2,'0')}_${stamp}.jpg`;
+
+                jobs.push((async () => {
                     const result = await uploadDriveDirect_(prepared.dataUrl, {
                         fileName, groupName, planName, markerId:marker.id, photoType:type, uploader:getCurrentUser()
                     }, stage => showLoading(`사진 ${i + 1}/${files.length} ${stage}...`));
 
-                    targetArray.push(result.thumbnailUrl || result.url);
-                    originalArray.push(result.thumbnailUrl || result.url);
-                    driveIds.push(result.fileId);
-                    originalDriveIds.push(result.fileId);
-                }
-                renderRightPanel();
-                syncMarkerToCloud(marker.id, currentPlanId).catch(() => {});
-            } catch (err) {
-                alert('사진 업로드 실패: ' + (err.message || err));
-            } finally {
-                hideLoading();
+                    targetArray[localIndex] = result.thumbnailUrl || result.url;
+                    originalArray[localIndex] = result.thumbnailUrl || result.url;
+                    driveIds[localIndex] = result.fileId;
+                    originalDriveIds[localIndex] = result.fileId;
+                    renderRightPanel();
+                    return result;
+                })());
             }
+
+            // 여러 장이면 동시에 Drive로 보냅니다.
+            await Promise.all(jobs);
+
+            // Drive ID가 저장된 뒤에만 Firestore에 기록합니다.
+            await syncMarkerToCloud(marker.id, currentPlanId);
+        } catch (err) {
+            alert('사진 업로드 실패: ' + (err.message || err));
+        } finally {
+            hideLoading();
+            e.target.value = '';
         }
-        e.target.value = '';
     }
 
     function downloadMarkerPhoto(event, markerId, type, pIdx) {
@@ -1583,7 +1578,7 @@
             const group = groups.find(g => g.plans.some(p => p.id === currentPlanId));
             const plan = group ? group.plans.find(p => p.id === currentPlanId) : null;
             const result = await driveUploadFresh_(finalData, {
-                fileName: makeDefectPhotoFileName_(marker, currentEditPhotoType, currentEditPhotoIndex, '마크업'),
+                fileName: `하자_${marker.id}_${currentEditPhotoType}_markup_${Date.now()}.jpg`,
                 groupName: group ? group.name : '미지정 현장', planName: plan ? plan.name : '미지정 도면',
                 markerId: marker.id, photoType: currentEditPhotoType, uploader: getCurrentUser()
             });
