@@ -205,6 +205,18 @@
             .top-actions { justify-content: space-between; width: 100%; }
         }
     </style>
+
+<style id="v10FeatureStyles">
+.v10-badge{display:inline-block;padding:2px 6px;border-radius:999px;font-size:10px;font-weight:700;margin-right:4px;line-height:1.3;}
+.v10-prio-긴급{background:#ffe0e0;color:#b30000}.v10-prio-중요{background:#fff0c2;color:#8a5a00}.v10-prio-일반{background:#e8f1fb;color:#2c5d8a}.v10-prio-낮음{background:#eef0f2;color:#66707a}
+.v10-overdue{background:#ffdddd;color:#a40000}.v10-due{background:#fff2cc;color:#7a5b00}.v10-done{background:#dcf5e6;color:#1f7a45}
+.v10-toolbar{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.v10-toolbar button{border:1px solid #d6dde5;background:#fff;border-radius:6px;padding:6px 8px;font-size:11px;font-weight:700;cursor:pointer}.v10-toolbar button:hover{background:#f4f8fb}
+.v10-field-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.v10-field-grid label{font-size:10px;font-weight:700;color:#667}.v10-field-grid input,.v10-field-grid select{width:100%;box-sizing:border-box;padding:7px;border:1px solid #cfd8e3;border-radius:6px;font-size:11px;background:#fff}
+.v10-full{grid-column:1/-1}.v10-compare-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.v10-compare-box{border:1px solid #dfe4ea;border-radius:8px;padding:6px;background:#fafbfd}.v10-compare-box h4{margin:0 0 5px;font-size:12px}.v10-compare-box img{width:100%;max-height:65vh;object-fit:contain;background:#111;border-radius:5px}
+.v10-small-note{font-size:10px;color:#7b8794;line-height:1.35}.v10-section{background:#f8fafc;border:1px solid #e1e7ef;border-radius:8px;padding:10px;margin:8px 0}.v10-section h4{margin:0 0 8px;font-size:12px;color:#34495e}
+.v10-report-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.v10-report-grid input,.v10-report-grid select{width:100%;box-sizing:border-box;padding:8px;border:1px solid #cfd8e3;border-radius:6px;font-size:12px}
+@media (max-width:700px){.v10-field-grid,.v10-report-grid,.v10-compare-grid{grid-template-columns:1fr}.v10-full{grid-column:auto}}
+</style>
 </head>
 <body>
 
@@ -249,6 +261,9 @@
             <button class="action-btn btn-excel" onclick="openExportOptionModal('excel')">📊 엑셀</button>
             <button class="action-btn btn-pdf" onclick="openExportOptionModal('pdf')">📄 PDF</button>
             <button class="action-btn btn-backup" onclick="openBackupModal()">💾 백업</button>
+            <button class="action-btn" style="background:#6c5ce7;color:#fff;" onclick="openV10ReportModal()">📋 상세보고</button>
+            <button class="action-btn" style="background:#8e44ad;color:#fff;" onclick="openTrashModal()">🗑️ 휴지통</button>
+            <button class="action-btn" style="background:#16a085;color:#fff;" onclick="openDriveAuditModal()">🧹 Drive정리</button>
         </div>
     </div>
 
@@ -321,6 +336,8 @@
                         <button id="gf_all" class="active" onclick="setGlobalFilter('all')">전체</button>
                         <button id="gf_pending" onclick="setGlobalFilter('pending')">미조치</button>
                         <button id="gf_completed" onclick="setGlobalFilter('completed')">완료</button>
+                        <button id="gf_overdue" onclick="setGlobalFilter('overdue')">기한초과</button>
+                        <button id="gf_today" onclick="setGlobalFilter('today')">오늘</button>
                     </div>
                     <label style="font-size:12px; font-weight:bold; color:#2c3e50; cursor:pointer; display:flex; align-items:center; gap:4px; padding-left:10px;">
                         <input type="checkbox" id="globalGroupByCheck" onchange="renderGlobalList()" checked>
@@ -414,6 +431,61 @@
         </div>
     </div>
 </div>
+
+
+<div id="v10CompareModal" class="modal-overlay" onclick="closeV10CompareModal()" style="display:none;">
+  <div class="modal-card" style="max-width:1000px;max-height:92vh;overflow:auto;" onclick="event.stopPropagation()">
+    <div class="modal-card-header"><h3 id="v10CompareTitle">📷 조치 전 / 후 비교</h3><button class="modal-close-icon" onclick="closeV10CompareModal()">✕</button></div>
+    <div class="modal-card-body"><div id="v10CompareContent"></div></div>
+  </div>
+</div>
+
+<div id="v10ReportModal" class="modal-overlay" onclick="closeV10ReportModal()" style="display:none;">
+  <div class="modal-card" style="max-width:700px;max-height:90vh;overflow:auto;" onclick="event.stopPropagation()">
+    <div class="modal-card-header"><h3>📋 업체/기간별 상세 보고서</h3><button class="modal-close-icon" onclick="closeV10ReportModal()">✕</button></div>
+    <div class="modal-card-body">
+      <div class="v10-section">
+        <h4>검색 조건</h4>
+        <div class="v10-report-grid">
+          <input id="v10ReportCompany" placeholder="담당업체 (비워두면 전체)">
+          <select id="v10ReportStatus"><option value="all">전체 상태</option><option value="pending">미조치</option><option value="completed">완료</option><option value="overdue">기한초과</option></select>
+          <input id="v10ReportFrom" type="date">
+          <input id="v10ReportTo" type="date">
+          <input id="v10ReportType" placeholder="하자 유형 (예: 도배)">
+          <input id="v10ReportPriority" placeholder="우선순위 (긴급/중요/일반/낮음)">
+        </div>
+      </div>
+      <div id="v10ReportPreview" class="v10-small-note" style="padding:8px 0;">조건을 선택하면 대상 건수가 표시됩니다.</div>
+      <div class="v10-toolbar">
+        <button onclick="exportV10ReportExcel()">📊 엑셀 저장</button>
+        <button onclick="exportV10ReportPDF()">📄 PDF 출력</button>
+        <button onclick="closeV10ReportModal()">닫기</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="v10TrashModal" class="modal-overlay" onclick="closeTrashModal()" style="display:none;">
+  <div class="modal-card" style="max-width:800px;max-height:88vh;overflow:auto;" onclick="event.stopPropagation()">
+    <div class="modal-card-header"><h3>🗑️ 휴지통 (30일)</h3><button class="modal-close-icon" onclick="closeTrashModal()">✕</button></div>
+    <div class="modal-card-body">
+      <div class="v10-small-note" style="margin-bottom:8px;">삭제한 하자/도면/그룹을 30일 이내 복구할 수 있습니다. Drive 파일도 함께 복구합니다.</div>
+      <div id="v10TrashContent"></div>
+    </div>
+  </div>
+</div>
+
+<div id="v10AuditModal" class="modal-overlay" onclick="closeDriveAuditModal()" style="display:none;">
+  <div class="modal-card" style="max-width:800px;max-height:88vh;overflow:auto;" onclick="event.stopPropagation()">
+    <div class="modal-card-header"><h3>🧹 Google Drive 정리 검사</h3><button class="modal-close-icon" onclick="closeDriveAuditModal()">✕</button></div>
+    <div class="modal-card-body">
+      <div class="v10-toolbar"><button onclick="runDriveAudit()">🔎 정리 검사</button><button onclick="cleanupDriveOrphans()">🗑️ 연결 끊긴 파일 휴지통</button></div>
+      <div id="v10AuditContent" class="v10-small-note">검사를 시작하세요.</div>
+    </div>
+  </div>
+</div>
+
+<div id="v10OfflineStatus" style="display:none;position:fixed;left:12px;bottom:12px;z-index:99999;background:#7f1d1d;color:#fff;padding:8px 11px;border-radius:9px;font-size:11px;box-shadow:0 2px 10px rgba(0,0,0,.2);">📴 오프라인: 저장 대기 중</div>
 
 <div id="dashboardModal" class="modal-overlay" onclick="closeDashboardModal()">
     <div class="modal-card" style="max-width:550px;" onclick="event.stopPropagation()">
@@ -1561,9 +1633,11 @@
         let filtered = targetMarkers;
         if (currentListFilter === 'pending') filtered = filtered.filter(m => m.status !== 'completed');
         if (currentListFilter === 'completed') filtered = filtered.filter(m => m.status === 'completed');
+        if (currentListFilter === 'overdue') filtered = filtered.filter(m => m.status !== 'completed' && m.deadline && String(m.deadline).slice(0,10) < new Date().toISOString().slice(0,10));
+        if (currentListFilter === 'today') filtered = filtered.filter(m => m.status !== 'completed' && ((m.deadline && String(m.deadline).slice(0,10) === new Date().toISOString().slice(0,10)) || (m.createdAt && String(m.createdAt).slice(0,10) === new Date().toISOString().slice(0,10))));
         if (selectedTypeFilter !== 'all') { filtered = filtered.filter(m => (m.type || '미지정') === selectedTypeFilter); }
         if (selectedUserFilter !== 'all') { filtered = filtered.filter(m => (m.authorName || '미상') === selectedUserFilter); }
-        if (keyword) { filtered = filtered.filter(m => (m.desc && m.desc.toLowerCase().includes(keyword)) || (m.authorName && m.authorName.toLowerCase().includes(keyword)) || (m.type && m.type.toLowerCase().includes(keyword)) ); }
+        if (keyword) { filtered = filtered.filter(m => (m.desc && m.desc.toLowerCase().includes(keyword)) || (m.authorName && m.authorName.toLowerCase().includes(keyword)) || (m.type && m.type.toLowerCase().includes(keyword)) || (m.company && m.company.toLowerCase().includes(keyword)) || (m.assignee && m.assignee.toLowerCase().includes(keyword)) || (m.deadline && String(m.deadline).toLowerCase().includes(keyword)) || (m.priority && m.priority.toLowerCase().includes(keyword)) ); }
 
         let html = ``; 
         if (!currentPlanId) { html += `<div class="empty-state">도면을 선택해 주세요.</div>`; rightContent.innerHTML = html; return; }
@@ -1587,7 +1661,7 @@
                     <div class="marker-list-item" onclick="${clickHandler}">
                         <input type="checkbox" class="marker-check" value="${m.id}" data-pid="${m._pId}" onclick="event.stopPropagation()">
                         <div class="marker-num" style="background-color:${pinColor};">${getMarkerNo_(m, m._pId || currentPlanId)}</div>
-                        <div style="flex-grow:1; min-width:0;"><div class="marker-desc"><span class="badge-type">[${m.type||'미지정'}]</span> ${textSnippet}</div></div>
+                        <div style="flex-grow:1; min-width:0;"><div class="marker-desc"><span class="v10-badge v10-prio-${m.priority||'일반'}">${m.priority||'일반'}</span>${m.deadline ? (m.status==='completed' ? '' : (String(m.deadline).slice(0,10)<new Date().toISOString().slice(0,10) ? '<span class="v10-badge v10-overdue">기한초과</span>' : '')) : ''}<span class="badge-type">[${m.type||'미지정'}]</span> ${textSnippet}</div><div style="font-size:10px;color:#7b8794;">${m.company||'업체 미지정'}${m.assignee ? ' · '+m.assignee : ''}</div></div>
                     </div>
                 `;
             });
@@ -2089,6 +2163,310 @@
         `;
         printWin.document.write(reportHTML); printWin.document.close();
     }
+
+
+// ==========================================================
+// V10 전체 기능 보강 (권한 제외)
+// ==========================================================
+(function(){
+  'use strict';
+
+  // ---------- 공통 ----------
+  function esc_(v){ return String(v==null?'':v).replace(/[&<>"']/g, function(c){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c];}); }
+  function todayStr_(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+  function parseDateOnly_(v){ if(!v) return null; const d=new Date(String(v).slice(0,10)+'T00:00:00'); return isNaN(d.getTime())?null:d; }
+  function isOverdue_(m){ return !!(m && m.status!=='completed' && m.deadline && String(m.deadline).slice(0,10) < todayStr_()); }
+  function prioBadge_(p){ const v=p||'일반'; return '<span class="v10-badge v10-prio-'+esc_(v)+'">'+esc_(v)+'</span>'; }
+  window.v10Esc_=esc_; window.v10PrioBadge_=prioBadge_; window.v10DueBadge_=dueBadge_; window.v10IsOverdue_=isOverdue_;
+  function dueBadge_(m){ if(!m || m.status==='completed' || !m.deadline) return ''; if(window.v10IsOverdue_(m)) return '<span class="v10-badge v10-overdue">기한초과 '+esc_(m.deadline)+'</span>'; if(String(m.deadline).slice(0,10)===todayStr_()) return '<span class="v10-badge v10-due">오늘 마감</span>'; return '<span class="v10-badge v10-due">기한 '+esc_(m.deadline)+'</span>'; }
+  function markerLabel_(m,pId){ return getMarkerNo_(m,pId)+'번'; }
+
+  // ---------- 필드 기본값 / 충돌 보호 ----------
+  const baseMigrate_ = window.migrateMarkerData;
+  window.migrateMarkerData = function(marker){
+    if(baseMigrate_) baseMigrate_(marker);
+    if(!marker) return marker;
+    marker.priority = marker.priority || '일반';
+    marker.company = marker.company || '';
+    marker.assignee = marker.assignee || '';
+    marker.deadline = marker.deadline || '';
+    marker.updatedAtMs = Number(marker.updatedAtMs||0);
+    marker.updatedBy = marker.updatedBy || marker.authorName || '';
+    marker._conflict = !!marker._conflict;
+    return marker;
+  };
+
+  const pendingLocalWrites_ = Object.create(null);
+  const conflictNotice_ = Object.create(null);
+  const pendingMarkerQueueKey_='defect_marker_sync_queue_v10';
+  async function queueMarkerSync_(pId,markerId){ let q=await localforage.getItem(pendingMarkerQueueKey_)||[]; const k=String(pId)+'|'+String(markerId); if(!q.includes(k))q.push(k); if(q.length>200)q=q.slice(-200); await localforage.setItem(pendingMarkerQueueKey_,q); }
+  async function removeMarkerSyncQueue_(k){ let q=await localforage.getItem(pendingMarkerQueueKey_)||[]; q=q.filter(x=>x!==k); await localforage.setItem(pendingMarkerQueueKey_,q); }
+  const baseSyncMarker_ = window.syncMarkerToCloud;
+  window.syncMarkerToCloud = async function(markerId,pId){
+    const marker=(markersByPlan[pId]||[]).find(m=>m.id===markerId);
+    const k=String(pId)+'|'+String(markerId);
+    if(marker){
+      migrateMarkerData(marker);
+      marker.updatedAtMs=Date.now();
+      marker.updatedBy=getCurrentUser();
+      marker.revision=(Number(marker.revision)||0)+1;
+      pendingLocalWrites_[k] = marker.updatedAtMs;
+      localforage.setItem('defect_markers', markersByPlan).catch(()=>{});
+      if(!navigator.onLine){ await queueMarkerSync_(pId,markerId); return; }
+    }
+    const result=baseSyncMarker_ ? await baseSyncMarker_(markerId,pId) : undefined;
+    if(navigator.onLine){ removeMarkerSyncQueue_(k).catch(()=>{}); }
+    return result;
+  };
+  async function processMarkerSyncQueue_(){
+    if(!navigator.onLine)return; const q=await localforage.getItem(pendingMarkerQueueKey_)||[]; if(!q.length)return;
+    for(const k of [...q]){const parts=String(k).split('|');if(parts.length!==2)continue;const pId=parts[0],mId=parseInt(parts[1],10);if(!isFinite(mId))continue;try{await window.syncMarkerToCloud(mId,pId);await removeMarkerSyncQueue_(k);}catch(e){break;}}
+  }
+  window.addEventListener('online',function(){setTimeout(processMarkerSyncQueue_,900);});
+
+  // 이미 설치된 Firestore 리스너가 원격 변경을 수신한 뒤, 내 로컬 변경보다 오래된 데이터로 덮어쓰면 되돌림
+  try{
+    db.collection('DefectMarkers').onSnapshot(function(snap){
+      snap.docChanges().forEach(function(ch){
+        if(ch.type!=='added' && ch.type!=='modified') return;
+        const r=ch.doc.data(); const key=String(r.planId)+'|'+String(r.id);
+        const local=(markersByPlan[r.planId]||[]).find(m=>m.id===r.id); const localTs=local?Number(local.updatedAtMs||0):0; const remoteTs=Number(r.updatedAtMs||0);
+        if(pendingLocalWrites_[key] && remoteTs && remoteTs < pendingLocalWrites_[key]){
+          if(local){ local._conflict=false; markersByPlan[r.planId]=markersByPlan[r.planId].map(m=>m.id===r.id?local:m); renderMarkers(); if(selectedMarkerId===r.id) renderRightPanel(); }
+        }else if(pendingLocalWrites_[key] && remoteTs >= pendingLocalWrites_[key]){
+          delete pendingLocalWrites_[key];
+        }else if(localTs && remoteTs && remoteTs !== localTs && String(r.updatedBy||'')!==String(getCurrentUser())){
+          conflictNotice_[key]=true;
+        }
+      });
+    });
+  }catch(e){}
+
+  // ---------- 우선순위/업체/담당자/기한 ----------
+  window.updateV10MarkerField=function(field,value){
+    const marker=(markersByPlan[currentPlanId]||[]).find(m=>m.id===selectedMarkerId); if(!marker) return;
+    migrateMarkerData(marker);
+    const map={priority:'우선순위',company:'담당업체',assignee:'담당자',deadline:'처리기한'};
+    const prev=marker[field]||''; marker[field]=String(value||'');
+    if(field==='deadline') marker[field]=marker[field].slice(0,10);
+    if(prev!==marker[field]){ marker.history.push({date:new Date().toLocaleString(),author:getCurrentUser(),text:(map[field]||field)+' 변경: '+(marker[field]||'없음')}); }
+    renderMarkers(); renderRightPanel(); syncMarkerToCloud(marker.id,currentPlanId);
+  };
+
+  function ensureAdvancedFields_(){
+    if(!selectedMarkerId || !currentPlanId) return;
+    const marker=(markersByPlan[currentPlanId]||[]).find(m=>m.id===selectedMarkerId); if(!marker) return;
+    migrateMarkerData(marker);
+    const old=document.getElementById('v10AdvancedMarkerFields'); if(old) old.remove();
+    const box=document.createElement('div'); box.id='v10AdvancedMarkerFields'; box.className='v10-section';
+    const users=[''].concat(userList||[]).filter((v,i,a)=>a.indexOf(v)===i);
+    const key=String(currentPlanId)+'|'+String(marker.id);
+    const conflict=conflictNotice_[key] ? '<div style="margin-bottom:8px;color:#b30000;font-weight:700;font-size:11px;">⚠️ 다른 사용자의 수정 내용이 감지되었습니다. 최신 저장 내용을 확인하세요.</div>' : '';
+    box.innerHTML = conflict + '<h4>⚙️ 관리 정보</h4>' +
+      '<div class="v10-field-grid">' +
+      '<label>우선순위<select onchange="updateV10MarkerField(\'priority\',this.value)"><option value="긴급" '+(marker.priority==='긴급'?'selected':'')+'>🔴 긴급</option><option value="중요" '+(marker.priority==='중요'?'selected':'')+'>🟠 중요</option><option value="일반" '+(marker.priority==='일반'?'selected':'')+'>🟡 일반</option><option value="낮음" '+(marker.priority==='낮음'?'selected':'')+'>⚪ 낮음</option></select></label>' +
+      '<label>담당업체<input value="'+esc_(marker.company)+'" placeholder="예: ○○건설" onchange="updateV10MarkerField(\'company\',this.value)"></label>' +
+      '<label>담당자<select onchange="updateV10MarkerField(\'assignee\',this.value)">'+users.map(u=>'<option value="'+esc_(u)+'" '+(marker.assignee===u?'selected':'')+'>'+(u||'미지정')+'</option>').join('')+'</select></label>' +
+      '<label>처리기한<input type="date" value="'+esc_(marker.deadline||'')+'" onchange="updateV10MarkerField(\'deadline\',this.value)"></label>' +
+      '<div class="v10-full" style="font-size:11px;">'+prioBadge_(marker.priority)+' '+dueBadge_(marker)+' '+(marker.status==='completed'?'<span class="v10-badge v10-done">완료</span>':'')+'</div>' +
+      (marker.photoUrls && marker.photoUrls.length && marker.afterPhotoUrls && marker.afterPhotoUrls.length ? '<div class="v10-full"><button class="action-btn" style="width:100%;justify-content:center;background:#3498db;color:#fff;" onclick="openV10CompareModal('+marker.id+')">📷 조치 전 / 후 비교</button></div>' : '') +
+      '<div class="v10-full v10-small-note">마지막 수정: '+esc_(marker.updatedBy||marker.authorName||'미상')+' / '+(marker.updatedAtMs?new Date(marker.updatedAtMs).toLocaleString():'-')+'</div>' +
+      '</div>';
+    const back=rightContent.querySelector('.back-btn');
+    if(back) back.insertAdjacentElement('afterend',box); else rightContent.prepend(box);
+  }
+
+  const baseRenderRight_ = window.renderRightPanel;
+  window.renderRightPanel = function(){ if(baseRenderRight_) baseRenderRight_(); setTimeout(ensureAdvancedFields_,0); };
+
+  // ---------- 사진 워터마크 개선: 현장/도면/마커/전후/담당자 ----------
+  window.prepareDefectPhotoFast = async function(file, meta){
+    const author=typeof meta==='string'?meta:(meta&&meta.uploader)||getCurrentUser();
+    const group=typeof meta==='object'?(meta.groupName||''):'';
+    const plan=typeof meta==='object'?(meta.planName||''):'';
+    const no=typeof meta==='object'?(meta.markerNo||''):'';
+    const type=typeof meta==='object'?((meta.photoType==='after')?'조치후':'조치전'):'';
+    const srcUrl=URL.createObjectURL(file);
+    try{
+      const img=await new Promise((resolve,reject)=>{const im=new Image();im.onload=()=>resolve(im);im.onerror=()=>reject(new Error('사진을 읽을 수 없습니다.'));im.src=srcUrl;});
+      let w=img.naturalWidth||img.width,h=img.naturalHeight||img.height; const maxDim=900;
+      if(Math.max(w,h)>maxDim){const r=maxDim/Math.max(w,h);w=Math.max(1,Math.round(w*r));h=Math.max(1,Math.round(h*r));}
+      const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;const ctx=canvas.getContext('2d',{alpha:false,desynchronized:true});
+      ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);ctx.drawImage(img,0,0,w,h);
+      const now=new Date().toLocaleString();
+      const line1=('[ '+group+' | '+plan+' | '+(no?String(no).padStart(2,'0')+'번':'')+' | '+type+' ]').replace(/\|\s*\|/g,'|');
+      const line2='[ '+now+' | '+author+' ]';
+      const fs=Math.max(11,Math.round(w/72));const pad=6;ctx.font='bold '+fs+'px sans-serif';
+      const tw=Math.max(ctx.measureText(line1).width,ctx.measureText(line2).width);const rh=fs*2+pad*3;const rw=Math.min(w-10,tw+pad*2);const rx=Math.max(5,w-rw-5),ry=Math.max(5,h-rh-5);
+      ctx.fillStyle='rgba(0,0,0,.65)';ctx.fillRect(rx,ry,rw,rh);ctx.fillStyle='#f1c40f';ctx.textBaseline='top';ctx.fillText(line1,rx+pad,ry+pad);ctx.fillStyle='#fff';ctx.fillText(line2,rx+pad,ry+pad+fs);
+      let q=.56;let out=canvas.toDataURL('image/jpeg',q);let blob=await (await fetch(out)).blob();if(blob.size<=DEFECT_UPLOAD_TARGET_BYTES)return {dataUrl:out,bytes:blob.size};
+      out=canvas.toDataURL('image/jpeg',.44);blob=await (await fetch(out)).blob();if(blob.size<=DEFECT_UPLOAD_TARGET_BYTES)return {dataUrl:out,bytes:blob.size};
+      const ratio=700/Math.max(w,h);if(ratio<1){w=Math.max(1,Math.round(w*ratio));h=Math.max(1,Math.round(h*ratio));canvas.width=w;canvas.height=h;const c=canvas.getContext('2d',{alpha:false,desynchronized:true});c.fillStyle='#fff';c.fillRect(0,0,w,h);c.drawImage(img,0,0,w,h);c.fillStyle='rgba(0,0,0,.65)';c.fillRect(5,h-Math.min(46,h-5),Math.min(w-10,Math.max(140,w*.9)),Math.min(46,h-5));c.fillStyle='#f1c40f';c.font='bold '+Math.max(10,Math.round(w/76))+'px sans-serif';c.fillText((group+' / '+plan+' / '+(no||'')+'번 / '+type).slice(0,75),10,Math.max(5,h-40));c.fillStyle='#fff';c.fillText((now+' / '+author).slice(0,75),10,Math.max(20,h-20));out=canvas.toDataURL('image/jpeg',.40);blob=await (await fetch(out)).blob();if(blob.size<=DEFECT_UPLOAD_HARD_MAX_BYTES)return {dataUrl:out,bytes:blob.size};}
+      throw new Error('사진을 1MB 이하로 압축하지 못했습니다.');
+    }finally{URL.revokeObjectURL(srcUrl);}
+  };
+
+  // ---------- 오프라인 사진 대기열 ----------
+  const QUEUE_KEY='defect_drive_photo_queue_v10';
+  async function queuePhoto_(job){ let q=await localforage.getItem(QUEUE_KEY)||[]; q.push(job); if(q.length>20) q=q.slice(-20); await localforage.setItem(QUEUE_KEY,q); updateOfflineUI_(); }
+  async function removeQueuedPhoto_(key){ let q=await localforage.getItem(QUEUE_KEY)||[]; q=q.filter(x=>x.key!==key); await localforage.setItem(QUEUE_KEY,q); updateOfflineUI_(); }
+  async function processPhotoQueue_(){
+    if(!navigator.onLine)return; let q=await localforage.getItem(QUEUE_KEY)||[]; if(!q.length){updateOfflineUI_();return;}
+    for(const job of [...q]){
+      try{
+        const result=await uploadDriveDirect_(job.dataUrl,job.meta);
+        const marker=(markersByPlan[job.pId]||[]).find(m=>m.id===job.markerId);if(marker){migrateMarkerData(marker);const arr=job.type==='after'?marker.afterPhotoUrls:marker.photoUrls;const ids=job.type==='after'?marker.afterPhotoDriveIds:marker.photoDriveIds;if(arr[job.index]!==undefined)arr[job.index]=result.thumbnailUrl||result.url;ids[job.index]=result.fileId||'';const oarr=job.type==='after'?marker.originalAfterPhotoUrls:marker.originalPhotoUrls;const oids=job.type==='after'?marker.originalAfterPhotoDriveIds:marker.originalPhotoDriveIds;oarr[job.index]=arr[job.index];oids[job.index]=ids[job.index];await syncMarkerToCloud(marker.id,job.pId);}
+        delete drivePhotoErrors[job.stateKey]; await removeQueuedPhoto_(job.key); renderRightPanel();
+      }catch(e){ drivePhotoErrors[job.stateKey]=e.message||String(e); break; }
+    }
+    updateOfflineUI_();
+  }
+  function updateOfflineUI_(){
+    const el=document.getElementById('v10OfflineStatus');if(!el)return;localforage.getItem(QUEUE_KEY).then(q=>{const n=(q||[]).length;if(!navigator.onLine){el.textContent='📴 오프라인: '+n+'건 저장 대기';el.style.display='block';}else if(n){el.textContent='☁️ Drive 업로드 대기 '+n+'건';el.style.display='block';}else el.style.display='none';});
+  }
+  window.addEventListener('offline',updateOfflineUI_);window.addEventListener('online',function(){updateOfflineUI_();processPhotoQueue_();});
+  setTimeout(updateOfflineUI_,1200);
+
+  // startBackgroundDriveUpload 재정의: 오프라인이면 큐에 보관, 온라인 실패도 재시도 가능
+  const baseBgUpload_=window.startBackgroundDriveUpload;
+  window.startBackgroundDriveUpload=function(marker,pid,type,prepared,index,meta){
+    const stateKey=photoStateKey_(marker.id,type,index);
+    if(!navigator.onLine){
+      drivePhotoErrors[stateKey]='📴 인터넷 복구 후 자동 업로드';
+      const job={key:makeDriveRequestId(),stateKey,markerId:marker.id,pId:pid,type,index,dataUrl:prepared.dataUrl,meta};
+      queuePhoto_(job).then(()=>renderRightPanel()); return;
+    }
+    if(baseBgUpload_) baseBgUpload_(marker,pid,type,prepared,index,meta);
+  };
+
+  // uploadMarkerPhotos 재정의: 메타데이터 워터마크 적용
+  window.uploadMarkerPhotos=async function(e,type){
+    const files=e.target.files;if(!files||!files.length){e.target.value='';return;}
+    try{
+      const marker=(markersByPlan[currentPlanId]||[]).find(m=>m.id===selectedMarkerId);if(!marker)throw new Error('선택된 하자를 찾을 수 없습니다.');migrateMarkerData(marker);
+      const group=groups.find(g=>g.plans.some(p=>p.id===currentPlanId));const plan=group?group.plans.find(p=>p.id===currentPlanId):null;
+      const isAfter=type==='after';const arr=isAfter?marker.afterPhotoUrls:marker.photoUrls;const ids=isAfter?marker.afterPhotoDriveIds:marker.photoDriveIds;const oarr=isAfter?marker.originalAfterPhotoUrls:marker.originalPhotoUrls;const oids=isAfter?marker.originalAfterPhotoDriveIds:marker.originalPhotoDriveIds;
+      hideLoading();backgroundDriveBatchTotal=files.length;backgroundDriveBatchDone=0;
+      for(let i=0;i<files.length;i++){
+        const prepared=await prepareDefectPhotoFast(files[i],{groupName:group?group.name:'미지정 현장',planName:plan?plan.name:'미지정 도면',markerNo:getMarkerNo_(marker,currentPlanId),photoType:type,uploader:getCurrentUser()});
+        const localIndex=arr.length;arr.push(prepared.dataUrl);oarr.push(prepared.dataUrl);ids.push('');oids.push('');renderRightPanel();
+        const fileName=markerFileStem_(marker,currentPlanId)+'_'+(isAfter?'조치후':'조치전')+'_'+String(i+1).padStart(2,'0')+'_'+Date.now()+'.jpg';
+        startBackgroundDriveUpload(marker,currentPlanId,type,prepared,localIndex,{fileName,groupName:group?group.name:'미지정 현장',planName:plan?plan.name:'미지정 도면',markerId:marker.id,markerNo:getMarkerNo_(marker,currentPlanId),photoType:type,uploader:getCurrentUser()});
+      }
+      syncMarkerToCloud(marker.id,currentPlanId).catch(()=>{});
+    }catch(err){alert('사진 처리 실패: '+(err.message||err));}finally{e.target.value='';}
+  };
+
+  // ---------- 일괄 처리 보강 ----------
+  function ensureBatchTools_(){
+    if(!currentPlanId||selectedMarkerId)return;const old=document.getElementById('v10BatchTools');if(old)old.remove();const bar=rightContent.querySelector('.batch-action-bar');if(!bar)return;const box=document.createElement('div');box.id='v10BatchTools';box.className='v10-toolbar';box.innerHTML=`<button onclick="batchSetV10('priority','긴급')">🔴 긴급</button><button onclick="batchSetV10('priority','중요')">🟠 중요</button><button onclick="batchSetV10('priority','일반')">🟡 일반</button><button onclick="batchSetV10('company')">🏢 업체 일괄</button><button onclick="batchSetV10('deadline')">📅 기한 일괄</button>`;bar.insertAdjacentElement('afterend',box);
+  }
+  window.batchSetV10=function(field,value){const cbs=[...document.querySelectorAll('.marker-check:checked')];if(!cbs.length)return alert('먼저 하자를 선택하세요.');let v=value;if(field==='company')v=prompt('담당업체를 입력하세요:');if(field==='deadline')v=prompt('처리기한을 입력하세요 (YYYY-MM-DD):');if(!v)return;cbs.forEach(cb=>{const pId=cb.dataset.pid;const m=(markersByPlan[pId]||[]).find(x=>x.id===parseInt(cb.value));if(!m)return;migrateMarkerData(m);m[field]=v;m.history.push({date:new Date().toLocaleString(),author:getCurrentUser(),text:'일괄 변경 - '+field+': '+v});syncMarkerToCloud(m.id,pId);});renderMarkers();renderMarkerListOnly();};
+
+  // ---------- 현재 도면 리스트 검색 보강 ----------
+  const baseRenderList_=window.renderMarkerListOnly;
+  window.renderMarkerListOnly=function(){
+    if(baseRenderList_) baseRenderList_();
+    setTimeout(ensureBatchTools_,0);
+    const filters=document.getElementById('v10CurrentFilters');if(filters)filters.remove();
+    if(!currentPlanId||selectedMarkerId)return;
+    const container=document.createElement('div');container.id='v10CurrentFilters';container.className='v10-toolbar';
+    container.innerHTML='<button onclick="setListFilter(\'overdue\')">🔴 기한초과</button><button onclick="setListFilter(\'today\')">🟡 오늘</button><button onclick="openV10ReportModal()">📋 상세보고</button>';
+    rightContent.insertBefore(container,rightContent.firstChild);
+  };
+  const baseSetListFilter_=window.setListFilter;
+  window.setListFilter=function(filter){
+    if(filter!=='overdue'&&filter!=='today')return baseSetListFilter_?baseSetListFilter_(filter):undefined;
+    currentListFilter=filter;renderMarkerListOnly();
+  };
+  // 원래 함수의 필터 로직을 직접 보강하여, 현재 도면 검색도 업체/담당자/기한/우선순위를 포함
+  const originalListSource=window.renderMarkerListOnly;
+
+  // ---------- 전체목록 고급필터 ----------
+  const baseOpenGlobal_=window.openGlobalListModal;
+  window.openGlobalListModal=function(){ if(baseOpenGlobal_) baseOpenGlobal_(); ensureGlobalFilters_(); setTimeout(renderGlobalList,0); };
+  function ensureGlobalFilters_(){
+    if(document.getElementById('v10GlobalFilters')) return;
+    const wrap=document.querySelector('#globalTypeSelect')?.parentElement; if(!wrap)return;
+    const box=document.createElement('div');box.id='v10GlobalFilters';box.className='v10-toolbar';
+    box.innerHTML='<select data-f="priority"><option value="all">우선순위 전체</option><option>긴급</option><option>중요</option><option>일반</option><option>낮음</option></select><input data-f="company" placeholder="업체 검색" style="padding:6px;border:1px solid #cfd8e3;border-radius:6px;font-size:11px;flex:1;min-width:100px"><select data-f="due"><option value="all">기한 전체</option><option value="overdue">기한초과</option><option value="today">오늘마감</option></select><input data-f="from" type="date" title="접수일 시작"><input data-f="to" type="date" title="접수일 종료">';
+    box.querySelectorAll('select,input').forEach(el=>el.addEventListener('input',renderGlobalList));
+    wrap.parentElement.insertBefore(box,wrap.nextSibling);
+  }
+
+  // ---------- 전/후 비교 ----------
+  window.openV10CompareModal=function(markerId){
+    const marker=(markersByPlan[currentPlanId]||[]).find(m=>m.id===markerId);if(!marker)return;
+    migrateMarkerData(marker);const a=marker.photoUrls||[],b=marker.afterPhotoUrls||[];let html='<div class="v10-compare-grid"><div class="v10-compare-box"><h4>📸 조치 전 ('+a.length+'장)</h4>';
+    html+=a.map((u,i)=>'<img src="'+esc_(driveDisplayUrl_((marker.photoDriveIds||[])[i],u))+'" loading="lazy">').join('')||'<div class="v10-small-note">사진 없음</div>';
+    html+='</div><div class="v10-compare-box"><h4>📸 조치 후 ('+b.length+'장)</h4>';
+    html+=b.map((u,i)=>'<img src="'+esc_(driveDisplayUrl_((marker.afterPhotoDriveIds||[])[i],u))+'" loading="lazy">').join('')||'<div class="v10-small-note">사진 없음</div>';
+    html+='</div></div>';
+    document.getElementById('v10CompareTitle').textContent='📷 '+markerLabel_(marker,currentPlanId)+' 조치 전 / 후 비교';document.getElementById('v10CompareContent').innerHTML=html;document.getElementById('v10CompareModal').style.display='flex';
+  };
+  window.closeV10CompareModal=function(){document.getElementById('v10CompareModal').style.display='none';};
+
+  // ---------- 상세 보고서 ----------
+  function v10AllMarkers_(){
+    const out=[];groups.forEach(g=>g.plans.forEach(p=>(markersByPlan[p.id]||[]).forEach(m=>{migrateMarkerData(m);out.push({...m,_g:g.name,_p:p.name,_pId:p.id,_markerNo:getMarkerNo_(m,p.id)});})));return out;
+  }
+  function v10FilteredReport_(){
+    const company=(document.getElementById('v10ReportCompany')?.value||'').trim().toLowerCase();const status=document.getElementById('v10ReportStatus')?.value||'all';const from=document.getElementById('v10ReportFrom')?.value||'';const to=document.getElementById('v10ReportTo')?.value||'';const type=(document.getElementById('v10ReportType')?.value||'').trim().toLowerCase();const pr=(document.getElementById('v10ReportPriority')?.value||'').trim().toLowerCase();
+    return v10AllMarkers_().filter(m=>{
+      if(company && String(m.company||'').toLowerCase().indexOf(company)<0)return false;
+      if(type && String(m.type||'').toLowerCase().indexOf(type)<0)return false;
+      if(pr && String(m.priority||'').toLowerCase().indexOf(pr)<0)return false;
+      if(status==='pending'&&m.status==='completed')return false;if(status==='completed'&&m.status!=='completed')return false;if(status==='overdue'&&!window.v10IsOverdue_(m))return false;
+      const d=String(m.createdAt||'').slice(0,10);if(from&&d<from)return false;if(to&&d>to)return false;return true;
+    });
+  }
+  function refreshReportPreview_(){const rows=v10FilteredReport_();const by={};rows.forEach(m=>{const k=m.company||'업체 미지정';by[k]=(by[k]||0)+1;});const summary=Object.keys(by).slice(0,6).map(k=>k+' '+by[k]+'건').join(' · ');const el=document.getElementById('v10ReportPreview');if(el)el.textContent='조건에 맞는 하자 '+rows.length+'건'+(summary?' | '+summary:'');}
+  window.openV10ReportModal=function(){document.getElementById('v10ReportModal').style.display='flex';['v10ReportCompany','v10ReportFrom','v10ReportTo','v10ReportType','v10ReportPriority'].forEach(id=>{const el=document.getElementById(id);if(el)el.oninput=refreshReportPreview_;});const s=document.getElementById('v10ReportStatus');if(s)s.onchange=refreshReportPreview_;refreshReportPreview_();};
+  window.closeV10ReportModal=function(){document.getElementById('v10ReportModal').style.display='none';};
+  window.exportV10ReportExcel=function(){const rows=v10FilteredReport_();if(!rows.length)return alert('조건에 맞는 자료가 없습니다.');const wb=XLSX.utils.book_new();const data=rows.map(m=>({'현장':m._g,'도면':m._p,'마커번호':m._markerNo,'우선순위':m.priority||'일반','하자유형':m.type||'미지정','담당업체':m.company||'','담당자':m.assignee||'','처리기한':m.deadline||'','상태':m.status==='completed'?'완료':'미조치','하자내용':m.desc||'','접수자':m.authorName||'','접수일시':m.createdAt||'','조치자':m.resolverName||'','완료일시':m.resolvedAt||''}));const ws=XLSX.utils.json_to_sheet(data);XLSX.utils.book_append_sheet(wb,ws,'하자현황');XLSX.writeFile(wb,'하자_상세보고서_'+todayStr_()+'.xlsx');};
+  window.exportV10ReportPDF=function(){const rows=v10FilteredReport_();if(!rows.length)return alert('조건에 맞는 자료가 없습니다.');const w=window.open('','_blank','width=1100,height=900');let html='<html><head><title>하자 상세 보고서</title><style>body{font-family:Malgun Gothic,sans-serif;padding:20px}table{width:100%;border-collapse:collapse}th,td{border:1px solid #ccc;padding:6px;font-size:11px}th{background:#f0f3f6}@media print{.noprint{display:none}}</style></head><body><div class="noprint"><button onclick="window.print()">🖨️ 인쇄</button></div><h2>하자 상세 보고서 - '+todayStr_()+'</h2><div style="font-size:12px;margin-bottom:10px;">총 '+rows.length+'건</div><table><tr><th>현장</th><th>도면</th><th>번호</th><th>우선</th><th>유형</th><th>업체</th><th>담당자</th><th>기한</th><th>상태</th><th>내용</th></tr>';rows.forEach(m=>{html+='<tr><td>'+esc_(m._g)+'</td><td>'+esc_(m._p)+'</td><td>'+esc_(m._markerNo)+'</td><td>'+esc_(m.priority||'일반')+'</td><td>'+esc_(m.type||'')+'</td><td>'+esc_(m.company||'')+'</td><td>'+esc_(m.assignee||'')+'</td><td>'+esc_(m.deadline||'')+'</td><td>'+esc_(m.status==='completed'?'완료':'미조치')+'</td><td>'+esc_(m.desc||'')+'</td></tr>';});html+='</table></body></html>';w.document.write(html);w.document.close();};
+
+  // ---------- 휴지통 ----------
+  async function saveTrash_(kind,id,title,payload,driveIds){
+    const trashId='trash_'+kind+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);const record={id:trashId,kind,title,payload,driveIds:[...new Set((driveIds||[]).filter(Boolean))],deletedAt:new Date().toISOString(),deletedBy:getCurrentUser()};try{await db.collection('DefectTrash').doc(trashId).set(record);}catch(e){await localforage.setItem(trashId,record);}return trashId;
+  }
+  async function listTrash_(){let out=[];try{const snap=await db.collection('DefectTrash').get();snap.forEach(d=>out.push(d.data()));}catch(e){}if(!out.length){const keys=await localforage.keys();for(const k of keys)if(String(k).indexOf('trash_')===0){const r=await localforage.getItem(k);if(r)out.push(r);}}return out.sort((a,b)=>String(b.deletedAt).localeCompare(String(a.deletedAt)));}
+  async function deleteTrashRecord_(id){try{await db.collection('DefectTrash').doc(id).delete();}catch(e){}try{await localforage.removeItem(id);}catch(e){}}
+  window.openTrashModal=async function(){document.getElementById('v10TrashModal').style.display='flex';const box=document.getElementById('v10TrashContent');box.innerHTML='<div class="v10-small-note">불러오는 중...</div>';const rows=(await listTrash_()).filter(r=>new Date(r.deletedAt).getTime()>Date.now()-30*86400000);if(!rows.length){box.innerHTML='<div class="v10-small-note">휴지통이 비어 있습니다.</div>';return;}box.innerHTML=rows.map(r=>'<div class="v10-section"><div><b>'+esc_(r.title||r.kind)+'</b> <span class="v10-small-note">'+new Date(r.deletedAt).toLocaleString()+'</span></div><div class="v10-small-note">삭제자: '+esc_(r.deletedBy||'')+' / 파일 '+(r.driveIds||[]).length+'개</div><div class="v10-toolbar"><button onclick="restoreTrashItem(\''+esc_(r.id)+'\')">♻️ 복구</button></div></div>').join('');};
+  window.closeTrashModal=function(){document.getElementById('v10TrashModal').style.display='none';};
+  window.restoreTrashItem=async function(trashId){const rows=await listTrash_();const r=rows.find(x=>x.id===trashId);if(!r)return;try{
+      const restoreIds=(r.driveIds||[]);if(restoreIds.length)await restoreDriveFiles_(restoreIds);
+      if(r.kind==='marker'){const pId=r.payload.planId; if(!markersByPlan[pId])markersByPlan[pId]=[]; const exists=markersByPlan[pId].some(m=>m.id===r.payload.id);if(!exists){markersByPlan[pId].push(r.payload);await db.collection('DefectMarkers').doc(String(r.payload.id)).set({...r.payload,planId:pId});}}
+      if(r.kind==='plan'){const g=groups.find(g=>g.id===r.payload.groupId);if(g){if(!g.plans.some(p=>p.id===r.payload.plan.id))g.plans.push(r.payload.plan);markersByPlan[r.payload.plan.id]=r.payload.markers||[];await syncMetaToCloud();await syncPlanToCloud(r.payload.plan.id);for(const m of markersByPlan[r.payload.plan.id])await syncMarkerToCloud(m.id,r.payload.plan.id);}}
+      if(r.kind==='group'){if(!groups.some(g=>g.id===r.payload.group.id)){groups.push(r.payload.group);for(const p of r.payload.group.plans){markersByPlan[p.id]=r.payload.markersByPlan[p.id]||[];for(const m of markersByPlan[p.id])await syncMarkerToCloud(m.id,p.id);await syncPlanToCloud(p.id);}}await syncMetaToCloud();}
+      await deleteTrashRecord_(trashId);renderSidebar();if(currentPlanId)changeFloorPlan(currentPlanId);await openTrashModal();alert('복구 완료');
+    }catch(e){alert('복구 실패: '+e.message);}};
+
+  async function restoreDriveFiles_(ids){if(!ids||!ids.length)return;await postDriveDirect_({event:'defect_photo',action:'restore',requestId:makeDriveRequestId(),fileIds:ids.join(',')});}
+
+  // 삭제 함수 교체: 마커/도면/그룹을 휴지통에 먼저 저장
+  window.deleteSelectedMarker=async function(){if(!confirm('휴지통으로 이동하시겠습니까? (30일 복구 가능)'))return;const pId=currentPlanId,mId=selectedMarkerId;const marker=(markersByPlan[pId]||[]).find(m=>m.id===mId);if(!marker)return;migrateMarkerData(marker);const compact=compactMarkerForCloud_(marker);compact.planId=pId;const ids=[...(marker.photoDriveIds||[]),...(marker.originalPhotoDriveIds||[]),...(marker.afterPhotoDriveIds||[]),...(marker.originalAfterPhotoDriveIds||[])];await saveTrash_('marker',String(mId),'마커 '+getMarkerNo_(marker,pId)+'번 - '+(marker.desc||'하자'),compact,ids);markersByPlan[pId]=markersByPlan[pId].filter(m=>m.id!==mId);await db.collection('DefectMarkers').doc(String(mId)).delete();if(ids.length)requestDriveDelete_(ids);selectedMarkerId=null;renderMarkers();renderRightPanel();autoCloudBackup();};
+
+  window.deletePlan=async function(gId,pId){if(!confirm('도면을 휴지통으로 이동하시겠습니까? (30일 복구 가능)'))return;const g=groups.find(x=>x.id===gId);if(!g)return;const plan=g.plans.find(p=>p.id===pId);if(!plan)return;const markers=markersByPlan[pId]||[];const ids=[];if(plan.driveId)ids.push(plan.driveId);markers.forEach(m=>{migrateMarkerData(m);ids.push(...(m.photoDriveIds||[]),...(m.originalPhotoDriveIds||[]),...(m.afterPhotoDriveIds||[]),...(m.originalAfterPhotoDriveIds||[]));});const payload={groupId:gId,plan:{...plan},markers:markers.map(m=>compactMarkerForCloud_(m))};await saveTrash_('plan',pId,'도면 '+plan.name,payload,ids);for(const m of markers)await db.collection('DefectMarkers').doc(String(m.id)).delete();await db.collection('FloorPlans').doc(String(pId)).delete();if(ids.length)requestDriveDelete_(ids);g.plans=g.plans.filter(p=>p.id!==pId);delete markersByPlan[pId];if(currentPlanId===pId)clearViewer();renderSidebar();syncMetaToCloud();autoCloudBackup();};
+
+  window.deleteGroup=async function(gId){if(!confirm('그룹 전체를 휴지통으로 이동하시겠습니까? (30일 복구 가능)'))return;const g=groups.find(x=>x.id===gId);if(!g)return;const ids=[];const mp={};g.plans.forEach(p=>{if(p.driveId)ids.push(p.driveId);mp[p.id]=(markersByPlan[p.id]||[]).map(m=>{migrateMarkerData(m);ids.push(...(m.photoDriveIds||[]),...(m.originalPhotoDriveIds||[]),...(m.afterPhotoDriveIds||[]),...(m.originalAfterPhotoDriveIds||[]));return compactMarkerForCloud_(m);});});await saveTrash_('group',gId,'그룹 '+g.name,{group:{...g,plans:g.plans.map(p=>({...p}))},markersByPlan:mp},ids);for(const p of g.plans){for(const m of (markersByPlan[p.id]||[]))await db.collection('DefectMarkers').doc(String(m.id)).delete();await db.collection('FloorPlans').doc(String(p.id)).delete();delete markersByPlan[p.id];}if(ids.length)requestDriveDelete_(ids);groups=groups.filter(x=>x.id!==gId);if(g.plans.some(p=>p.id===currentPlanId))clearViewer();renderSidebar();syncMetaToCloud();autoCloudBackup();};
+
+  // ---------- Drive 감사/정리 ----------
+  window.openDriveAuditModal=function(){document.getElementById('v10AuditModal').style.display='flex';document.getElementById('v10AuditContent').innerHTML='정리 검사를 누르세요.';};
+  window.closeDriveAuditModal=function(){document.getElementById('v10AuditModal').style.display='none';};
+  let lastAudit_ = null;
+  window.runDriveAudit=async function(){const box=document.getElementById('v10AuditContent');box.textContent='Drive 파일을 검사하는 중입니다...';const photoIds=[],planIds=[];v10AllMarkers_().forEach(m=>{photoIds.push(...(m.photoDriveIds||[]),...(m.originalPhotoDriveIds||[]),...(m.afterPhotoDriveIds||[]),...(m.originalAfterPhotoDriveIds||[]));});groups.forEach(g=>g.plans.forEach(p=>{if(p.driveId)planIds.push(p.driveId);}));const requestId=makeDriveRequestId();lastAudit_=requestId;try{await postDriveDirect_({event:'defect_audit',action:'index',requestId,photoIds:[...new Set(photoIds)].join(','),planIds:[...new Set(planIds)].join(',')});const result=await waitForDriveAuditResult_(requestId,10000);window._lastDriveAudit=result;box.innerHTML='<div><b>사진 폴더:</b> 전체 '+result.photos.total+'개 / 연결끊김 '+result.photos.orphanCount+'개</div><div><b>도면 폴더:</b> 전체 '+result.plans.total+'개 / 연결끊김 '+result.plans.orphanCount+'개</div><div style="margin-top:8px;">연결 끊긴 파일은 아래 휴지통 버튼으로 정리할 수 있습니다.</div>'; }catch(e){box.textContent='검사 실패: '+e.message;}};
+  function waitForDriveAuditResult_(requestId,timeoutMs){return new Promise((resolve,reject)=>{let done=false;const start=Date.now();let timer=null;function finish(e,r){if(done)return;done=true;if(timer)clearInterval(timer);e?reject(e):resolve(r);}function poll(){const cb='__audit_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);const s=document.createElement('script');window[cb]=function(r){try{if(r&&r.status==='complete')finish(null,r);else if(r&&r.status==='error')finish(new Error(r.error||'감사 오류'));}finally{try{delete window[cb]}catch(e){}s.remove();}};s.onerror=function(){try{delete window[cb]}catch(e){}s.remove();};s.src=DEFECT_DRIVE_GAS_URL+'?action=audit_status&requestId='+encodeURIComponent(requestId)+'&callback='+encodeURIComponent(cb)+'&t='+Date.now();document.head.appendChild(s);setTimeout(()=>{try{delete window[cb]}catch(e){}s.remove();},1400);if(Date.now()-start>timeoutMs)finish(new Error('감사 결과 확인시간이 초과되었습니다.'));}poll();timer=setInterval(poll,500);});}
+  window.cleanupDriveOrphans=async function(){const r=window._lastDriveAudit;if(!r)return alert('먼저 정리 검사를 실행하세요.');const ids=[...(r.photos.orphans||[]).map(x=>x.fileId),...(r.plans.orphans||[]).map(x=>x.fileId)].filter(Boolean);if(!ids.length)return alert('연결 끊긴 파일이 없습니다.');if(!confirm(ids.length+'개 파일을 Drive 휴지통으로 보낼까요?'))return;await postDriveDirect_({event:'defect_audit',action:'cleanup',requestId:makeDriveRequestId(),fileIds:ids.join(',')});alert('정리 요청을 보냈습니다.');};
+
+  // ---------- JSON 백업에도 30일 이전 휴지통 정리 ----------
+  setTimeout(async function(){try{const rows=await listTrash_();for(const r of rows){if(new Date(r.deletedAt).getTime()<Date.now()-30*86400000)await deleteTrashRecord_(r.id);}}catch(e){}},3000);
+
+  // ---------- 현재 도면 검색에 고급 필드를 포함 ----------
+  // v9의 함수 본문을 문자열로 수정하는 대신 입력값으로 필터링할 수 있도록 검색어를 확장하는 보정
+  const searchEl=document.getElementById('searchInput');if(searchEl){searchEl.placeholder='🔍 하자/업체/담당자/기한/우선순위 검색...';}
+
+})();
 
     window.onload = async function() { await bootstrapApp(); setTimeout(() => ensureAllMarkerNumbers_(), 2500); };
 </script>
